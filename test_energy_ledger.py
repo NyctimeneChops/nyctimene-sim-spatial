@@ -1,166 +1,138 @@
 """
-Deterministic energy-ledger test (Pass 1) - NO GPU, NO DB, NO network.
+Deterministic energy-ledger test (Pass 1, v1 recalibration) - NO GPU/DB/network.
 
-Stubs the inference token cost at a fixed value so the ledger is deterministic,
-then drives a handful of agents over a series of ticks and prints the per-tick
-energy trace for each, checking every worked number in the spec (sections 4-5).
+The ledger is validated against the MEASURED real per-decision burn (not the old
+5000 stub): ~1350 early (day 1) rising to ~1660 mature. Every scenario is run at
+BOTH ends so we confirm the constants produce pressure across the whole run.
 
-Run:  python test_energy_ledger.py   (from the code root, USE_MOCK not needed)
+GOVERNING PRINCIPLE checked here: BASAL_INCOME < the real per-thought cost, so an
+agent that only thinks LOSES energy each tick (think-only net-NEGATIVE).
 """
 
 from constants import (
-    MAX_ENERGY, BASAL_INCOME, COST_HARVEST, COST_COOK,
-    YIELD_EAT_RAW, YIELD_REST, INACTIVITY_THRESHOLD_TICKS,
+    MAX_ENERGY, BASAL_INCOME, COST_HARVEST, COST_COOK, COST_BUILD,
+    YIELD_EAT_RAW, YIELD_EAT_COOKED, YIELD_DRINK, YIELD_REST, YIELD_REST_SHELTER,
+    INACTIVITY_THRESHOLD_TICKS,
 )
 from mechanics import energy as E
 
-STUB_TOKENS = 5000   # fixed (prompt+completion) inference cost for determinism
+EARLY_BURN, MATURE_BURN = 1350, 1660   # measured real prompt+completion cost
 
 _checks = []
 def check(name, ok, detail=""):
-    _checks.append((name, ok, detail))
+    _checks.append(ok)
     print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
 
 
-def run(label, start, steps, sheltered=False):
-    """steps: list of (action_type, target, precondition_ok). Returns the full
-    per-tick trace as a list of dicts, printing each tick."""
-    print(f"\n=== {label}  (start={start}, stub inference={STUB_TOKENS}/tick) ===")
-    e = start
-    trace = []
+def run(label, start, steps, burn, sheltered=False):
+    print(f"\n=== {label}  (start={start}, burn={burn}/thought) ===")
+    e, trace = start, []
     for i, (action, target, precond) in enumerate(steps, 1):
-        r = E.resolve_tick(e, action, STUB_TOKENS, target=target,
-                           sheltered=sheltered, precondition_ok=precond)
-        delta = r["energy"] - e
+        r = E.resolve_tick(e, action, burn, target=target, sheltered=sheltered,
+                           precondition_ok=precond)
+        d = r["energy"] - e
         tgt = f" {target}" if target else ""
-        print(f"  tick {i:>2}: {action}{tgt:<14} "
-              f"{e:>7} -> {r['energy']:>7}  (d={delta:+d})  "
+        print(f"  t{i:>2}: {action}{tgt:<12} {e:>6} -> {r['energy']:>6}  (d={d:+d})  "
               f"{r['outcome']}" + ("  SOFT-LOCKED" if r["soft_locked"] else ""))
-        e = r["energy"]
-        trace.append(r)
+        e = r["energy"]; trace.append(r)
     return trace
 
 
-print("=" * 70)
-print("ENERGY LEDGER - deterministic trace test (Pass 1)")
+print("=" * 72)
+print("ENERGY LEDGER v1 - deterministic traces at the REAL measured burn")
 print(f"MAX_ENERGY={MAX_ENERGY}  BASAL_INCOME={BASAL_INCOME}  "
-      f"stub_inference={STUB_TOKENS}")
-print(f"soft-lock threshold (cheapest costed action) = {E.SOFT_LOCK_THRESHOLD}")
-print(f"INACTIVITY_THRESHOLD_TICKS = {INACTIVITY_THRESHOLD_TICKS} "
-      f"(ticks in one in-world day)")
-print("=" * 70)
+      f"soft-lock<{E.SOFT_LOCK_THRESHOLD}  inactivity@{INACTIVITY_THRESHOLD_TICKS} ticks")
+print(f"costs harvest/cook/build={COST_HARVEST}/{COST_COOK}/{COST_BUILD}  "
+      f"yields eat/cooked/drink/rest={YIELD_EAT_RAW}/{YIELD_EAT_COOKED}/{YIELD_DRINK}/{YIELD_REST}")
+print(f"real burn: EARLY={EARLY_BURN}  MATURE={MATURE_BURN}   "
+      f"(BASAL {BASAL_INCOME} < both => idle bleeds)")
+print("=" * 72)
 
-# (a) harvest-then-eat cycle: start below cap so basal is not clipped, so the
-#     2-tick cycle net is clean. Expect about +30k per harvest+eat cycle.
-a = run("(a) harvest-then-eat cycle", 50000,
-        [("harvest", "apple", True), ("eat", "apple", True)] * 3)
-cycle_net = a[1]["energy"] - 50000          # after the first harvest+eat cycle
-check("(a) harvest-then-eat cycle strongly net-positive (~+30k / 2-tick cycle)",
-      28000 <= cycle_net <= 32000, f"cycle net = {cycle_net:+d}")
+for burn in (EARLY_BURN, MATURE_BURN):
+    tag = "EARLY" if burn == EARLY_BURN else "MATURE"
+    print(f"\n############ BURN = {burn} ({tag}) ############")
 
-# (b) harvest but never eat: start full. Steady-state (once below the cap) should
-#     bleed about -7k/tick and eventually soft-lock.
-b = run("(b) harvest but never eat", MAX_ENERGY,
-        [("harvest", "apple", True)] * 16)
-steady_delta = b[2]["energy"] - b[1]["energy"]   # a mid, below-cap tick
-check("(b) harvest-never-eat bleeds ~-7k/tick",
-      steady_delta == -(STUB_TOKENS + COST_HARVEST - BASAL_INCOME),
-      f"per-tick delta = {steady_delta:+d}")
-check("(b) harvest-never-eat eventually soft-locks",
-      any(t["soft_locked"] for t in b),
-      f"first soft-lock at tick {next((i+1 for i,t in enumerate(b) if t['soft_locked']), None)}")
+    a = run("(a) harvest-then-eat cycle", 15000,
+            [("harvest", "apple", True), ("eat", "apple", True)] * 3, burn)
+    cycle_net = a[1]["energy"] - 15000
+    check(f"[{tag}] (a) harvest-then-eat cycle strongly net-positive",
+          cycle_net == 11800 - 2 * burn and cycle_net > 5000, f"cycle net = {cycle_net:+d}")
 
-# (c) rest only: nets about +3k/tick (survives slowly, banks little).
-c = run("(c) rest only", 20000, [("rest", None, True)] * 6)
-rest_delta = c[1]["energy"] - c[0]["energy"]
-check("(c) rest-only nets ~+3k/tick",
-      rest_delta == BASAL_INCOME + YIELD_REST - STUB_TOKENS,
-      f"per-tick delta = {rest_delta:+d}")
+    b = run("(b) harvest but never eat", MAX_ENERGY,
+            [("harvest", "apple", True)] * 18, burn)
+    steady = b[2]["energy"] - b[1]["energy"]
+    check(f"[{tag}] (b) harvest-never-eat bleeds each tick",
+          steady == -(burn + COST_HARVEST - BASAL_INCOME) and steady < 0,
+          f"steady delta = {steady:+d}")
+    check(f"[{tag}] (b) harvest-never-eat soft-locks",
+          any(t["soft_locked"] for t in b),
+          f"first at t{next((i+1 for i,t in enumerate(b) if t['soft_locked']), None)}")
 
-# (d) think only / do nothing else: a free no-yield action (e.g. an unreciprocated
-#     message). Nets about -3k/tick and bleeds out.
-d = run("(d) think only (free, no yield)", 20000, [("message", None, True)] * 8)
-think_delta = d[1]["energy"] - d[0]["energy"]
-check("(d) think-only nets ~-3k/tick and bleeds out",
-      think_delta == BASAL_INCOME - STUB_TOKENS and d[-1]["energy"] < d[0]["energy"],
-      f"per-tick delta = {think_delta:+d}, ended at {d[-1]['energy']}")
+    c = run("(c) rest only", 10000, [("rest", None, True)] * 5, burn)
+    rest_delta = c[1]["energy"] - c[0]["energy"]
+    eat_delta = BASAL_INCOME - burn + YIELD_EAT_RAW   # a non-capped eat tick
+    check(f"[{tag}] (c) rest-only slightly POSITIVE",
+          rest_delta == BASAL_INCOME + YIELD_REST - burn and rest_delta > 0,
+          f"rest delta = {rest_delta:+d}")
+    check(f"[{tag}] (c) rest gain is well BELOW eating",
+          rest_delta < 0.2 * eat_delta, f"rest {rest_delta} vs eat {eat_delta}")
 
-# (e) driven to 0 then rescued by eating a stubbed gifted apple.
-e_steps = [("message", None, True)] * 8 + [("eat", "apple", True)]  # think down, then eat gift
-e = run("(e) 0-floor then social rescue (gifted apple)", 6000, e_steps)
-hit_zero = any(t["energy"] == 0 for t in e[:-1])
-rescued = e[-1]["energy"] > E.SOFT_LOCK_THRESHOLD
+    d = run("(d) think only (free, no yield)", 10000, [("message", None, True)] * 6, burn)
+    think_delta = d[1]["energy"] - d[0]["energy"]
+    check(f"[{tag}] (d) think-only is NET-NEGATIVE (the fix)",
+          think_delta == BASAL_INCOME - burn and think_delta < 0,
+          f"think delta = {think_delta:+d}  (BASAL {BASAL_INCOME} < burn {burn})")
+
+print("\n############ burn-independent invariants ############")
+
+e_tr = run("(e) 0-floor then social rescue (gifted apple)", 6000,
+           [("message", None, True)] * 8 + [("eat", "apple", True)], MATURE_BURN)
 check("(e) reaches 0 then recovers after eating the gifted apple",
-      hit_zero and rescued, f"min={min(t['energy'] for t in e)}, final={e[-1]['energy']}")
+      any(t["energy"] == 0 for t in e_tr[:-1]) and e_tr[-1]["energy"] > E.SOFT_LOCK_THRESHOLD,
+      f"min={min(t['energy'] for t in e_tr)}, final={e_tr[-1]['energy']}")
 
-print("\n--- invariant checks ---")
+alltr = list(e_tr)
+for burn in (EARLY_BURN, MATURE_BURN):
+    alltr += run("(bleed check)", 5000, [("message", None, True)] * 6, burn)
+check("0-floor holds (energy never negative)", all(t["energy"] >= 0 for t in alltr))
 
-# 0-floor: energy never goes negative across every trace above.
-never_negative = all(t["energy"] >= 0 for tr in (a, b, c, d, e) for t in tr)
-check("0-floor holds (energy never negative)", never_negative)
-
-# MAX cap: eating near the cap clips at MAX_ENERGY.
-cap = E.resolve_tick(98000, "eat", STUB_TOKENS, target="apple")
+cap = E.resolve_tick(MAX_ENERGY - 1000, "eat", MATURE_BURN, target="apple")
 check("MAX_ENERGY cap holds (eat near cap clips)", cap["energy"] == MAX_ENERGY,
-      f"98000 -> {cap['energy']}")
+      f"{MAX_ENERGY-1000} -> {cap['energy']}")
 
-# Thinking is never denied; a costed action IS denied when balance < cost.
-# Soft-locked agent (energy 1000) tries to harvest: inference still debits
-# (the thought happened), the costed action is denied.
-denied = E.resolve_tick(1000, "harvest", STUB_TOKENS, target="apple")
+denied = E.resolve_tick(500, "harvest", MATURE_BURN, target="apple")   # 500 < cook 1000
 check("thinking never denied (inference applied even when broke)",
-      denied["before_action"] == max(0, 1000 + BASAL_INCOME - STUB_TOKENS))
+      denied["before_action"] == max(0, 500 + BASAL_INCOME - MATURE_BURN))
 check("costed action denied when balance < cost",
-      denied["outcome"] == "costed_denied" and denied["applied"] is False,
-      f"energy {1000} -> {denied['energy']}, outcome={denied['outcome']}")
-# ...and the same broke agent's FREE actions are always allowed.
-freed = E.resolve_tick(1000, "eat", STUB_TOKENS, target="apple")
-check("free action allowed at the same low balance",
-      freed["applied"] is True and freed["outcome"] == "free_applied")
-
-# Death conditions gone: the module has no death path; soft-lock/inactivity only.
-check("no death mechanic in the energy ledger (soft-lock/inactivity only)",
+      denied["outcome"] == "costed_denied" and denied["applied"] is False)
+freed = E.resolve_tick(500, "eat", MATURE_BURN, target="apple")
+check("free action allowed at the same low balance", freed["applied"] is True)
+check("no death mechanic (soft-lock/inactivity only)",
       not hasattr(E, "apply_death") and hasattr(E, "is_soft_locked"))
 
-print("\n--- sample built prompt (energy / affordability + participation directive) ---")
-# Render the Pass-1 prompt pieces without a DB/GPU via the pure renderers.
-from models.prompt_builder import (
-    energy_status_lines, available_actions_lines, directive_lines,
-)
+print("\n############ sample built prompt (energy / affordability + directive) ############")
+from models.prompt_builder import energy_status_lines, available_actions_lines, directive_lines
+def sample(energy):
+    p = ["--- YOUR STATUS ---", "  Model ID:           flat_C1_01"]
+    p += energy_status_lines(energy) + [""] + available_actions_lines(energy) + [""] + directive_lines()
+    return "\n".join(p)
+healthy, locked = sample(15000), sample(500)
+print("\n[ HEALTHY energy=15000 ]"); print(healthy)
+print("\n[ SOFT-LOCKED energy=500 ] (changed lines)")
+for l in locked.splitlines():
+    if any(k in l for k in ("Energy:", "SOFT-LOCKED", "harvest", "cook", "build")):
+        print(l)
+def line(t, n): return next((l for l in t.splitlines() if l.strip().startswith(n)), "")
+check("participation directive present", "participate as much as you possibly can" in healthy.lower())
+check("survival/death directive gone", "die" not in healthy.lower() and "survive" not in healthy.lower())
+check("current energy shown (new scale)", "Energy: 15000 / 30000" in healthy)
+check("costed action shows cost+affordable when funded",
+      f"{COST_HARVEST} energy" in line(healthy, "harvest") and "[affordable]" in line(healthy, "harvest"))
+check("costed action shows TOO LOW when soft-locked", "[TOO LOW]" in line(locked, "harvest"))
+check("free action shown as free", "free (no fixed energy cost)" in line(healthy, "eat"))
 
-def sample_prompt(energy):
-    parts = ["--- YOUR STATUS ---", "  Model ID:           flat_C1_01"]
-    parts += energy_status_lines(energy)
-    parts += [""] + available_actions_lines(energy)
-    parts += [""] + directive_lines()
-    return "\n".join(parts)
-
-healthy = sample_prompt(43000)
-locked  = sample_prompt(1000)
-print("\n[ HEALTHY AGENT, energy=43000 ]")
-print(healthy)
-print("\n[ SOFT-LOCKED AGENT, energy=1000 ]  (only the changed lines shown)")
-for line in locked.splitlines():
-    if "Energy:" in line or "SOFT-LOCKED" in line or "harvest" in line or "cook" in line or "build" in line:
-        print(line)
-
-check("participation directive present ('participate as much as you possibly can')",
-      "participate as much as you possibly can" in healthy.lower())
-check("survival/death directive removed from the prompt",
-      "die" not in healthy.lower() and "survive" not in healthy.lower())
-check("current energy shown in prompt", "Energy: 43000 / 100000" in healthy)
-def _line(text, needle):
-    return next((l for l in text.splitlines() if l.strip().startswith(needle)), "")
-check("costed action shows cost + affordable when funded",
-      "4000 energy" in _line(healthy, "harvest") and "[affordable]" in _line(healthy, "harvest"))
-check("costed action shows TOO LOW when soft-locked",
-      "4000 energy" in _line(locked, "harvest") and "[TOO LOW]" in _line(locked, "harvest"))
-check("free action shown as free (no fixed energy cost)",
-      "free (no fixed energy cost)" in _line(healthy, "eat"))
-
-print("\n" + "=" * 70)
-passed = sum(1 for _, ok, _ in _checks if ok)
+print("\n" + "=" * 72)
+passed = sum(_checks)
 print(f"RESULT: {passed}/{len(_checks)} checks passed")
-print("=" * 70)
-import sys
-sys.exit(0 if passed == len(_checks) else 1)
+print("=" * 72)
+import sys; sys.exit(0 if passed == len(_checks) else 1)

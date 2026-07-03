@@ -283,23 +283,46 @@ EXPERIMENT_DURATION_DAYS = 14
 # energy yield to trading.
 # ----------------------------------------------------------------------------
 
+# --- v1 RECALIBRATION (2026-07-03), anchored to the MEASURED real burn --------
+# The original v0 set was scaled to a 5000-token/thought stub. The live prompt
+# builder was then measured with the real Llama-3.1 tokenizer: ~1251 tokens early
+# (day 1) rising to ~1561 mature, i.e. ~1350-1660 energy/decision. GOVERNING
+# PRINCIPLE (non-negotiable): BASAL_INCOME must sit clearly BELOW the real
+# per-thought cost so an agent that ONLY thinks still LOSES energy each tick (the
+# pressure exists from tick 1). v0's BASAL=2000 exceeded the real cost and
+# inverted the pressure (idle was net-positive). The whole set below is scaled
+# ~3x down from v0 to hold the same ratios against the ~1500 real per-thought
+# cost. Every number remains a calibration knob.
+
 # One per-agent depletable, capped energy balance. Every agent starts full.
-MAX_ENERGY = 100000
-# Unconditional per-tick income (credited first, every tick, capped at MAX_ENERGY).
-BASAL_INCOME = 2000
+# ~1500/thought => ~20 thoughts from full, so an agent that never eats runs low
+# within roughly the first in-world day.
+MAX_ENERGY = 30000
+# Unconditional per-tick income. MUST be < the real per-thought cost (~1350-1660)
+# so think-only nets negative (~-850 early / -1160 mature) while still being a
+# genuine floor: a soft-locked agent, resting, slowly crawls back.
+BASAL_INCOME = 500
 
 # Fixed costs of COSTED actions (charged on top of the inference debit; the
-# action is DENIED if energy < cost). Solo harvest only in Pass 1.
-COST_HARVEST = 4000
-COST_BUILD   = 8000
-COST_COOK    = 3000
+# action is DENIED if energy < cost). Solo harvest only in Pass 1. Scaled ~3x
+# from v0 (4000/8000/3000). Harvest ~= one thought's worth (cheap but non-trivial);
+# build stays the most expensive single act.
+COST_HARVEST = 1200
+COST_BUILD   = 2500
+COST_COOK    = 1000
 
 # Consumption / recovery yields (energy credited by FREE actions; capped at MAX).
-YIELD_EAT_RAW     = 40000   # e.g. apple, eaten raw
-YIELD_EAT_COOKED  = 55000   # cooked meat/potato/grain/bread (cooking pays off)
-YIELD_DRINK       = 30000
-YIELD_REST        = 6000    # rest / sleep with no shelter
-YIELD_REST_SHELTER = 12000  # rest / sleep in shelter (shelter doubles rest)
+# Scaled ~3x from v0 so consumption stays an obviously-worth-it payoff: a
+# harvest-then-eat cycle nets strongly positive (~+8.5-9k over 2 ticks) while NOT
+# eating bleeds you out. Cooked keeps a meaningful premium over raw.
+YIELD_EAT_RAW     = 12000   # e.g. apple, eaten raw
+YIELD_EAT_COOKED  = 16000   # cooked meat/potato/grain/bread (cooking pays off)
+YIELD_DRINK       = 9000
+# Rest must beat idling (a stuck agent can crawl back) but lose badly to eating
+# (rest is a survival floor, never a winning strategy): a rest tick nets ~+1000
+# after the ~1500 thought, far below eating's +12000. Shelter doubles it.
+YIELD_REST        = 2000    # rest / sleep with no shelter
+YIELD_REST_SHELTER = 4000   # rest / sleep in shelter (shelter doubles rest)
 
 # Physical units a solo harvest adds to inventory on success.
 HARVEST_SOLO_UNITS = 2
@@ -350,8 +373,7 @@ except _json.JSONDecodeError:
 
 
 # Fixed tokens_used returned by mock inference so token-flow / energy tests work.
-# Pass 1: this represents the ACTUAL (prompt + completion) cost of one decision,
-# in the realistic ~3k-6k band, so USE_MOCK_INFERENCE smoke runs exercise the
-# energy ledger with a plausible per-tick burn (the deterministic ledger test
-# stubs its own value independently).
-MOCK_TOKENS_USED = 4500
+# Set to the MEASURED real per-decision cost (~1350 early -> ~1660 mature; ~1500
+# mid) so USE_MOCK_INFERENCE smoke runs exercise the calibrated pressure the real
+# model produces. The deterministic ledger test stubs its own values (1350/1660).
+MOCK_TOKENS_USED = 1500
