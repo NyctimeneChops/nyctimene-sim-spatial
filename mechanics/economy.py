@@ -21,14 +21,14 @@ _FALLBACK_RATES = {
 }
 
 
-def get_token_balance(model_id):
+def get_wallet(model_id):
     resp = requests.get(f"{BASE_URL}/models/{model_id}", timeout=10)
     resp.raise_for_status()
-    return resp.json()["token_balance"]
+    return resp.json()["wallet"]
 
 
 def can_afford(model_id, cost):
-    return get_token_balance(model_id) >= cost
+    return get_wallet(model_id) >= cost
 
 
 def propose_trade(proposer_id, receiver_id, tokens_offered, resources_offered, resources_requested):

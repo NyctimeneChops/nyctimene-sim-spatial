@@ -35,7 +35,7 @@ VALID_THREAD_VOTE_OPTIONS = {"close": True, "open": False}
 
 DAY_LENGTH_MINUTES = 30
 
-STARTING_TOKEN_BALANCE = 150
+STARTING_WALLET = 150
 
 # ---------------------------------------------------------------- token budgets
 # Run 2 replaces the stamina economy with a real LLM token economy.
@@ -269,7 +269,7 @@ EXPERIMENT_DURATION_DAYS = 14
 # calibration knob, not a fixed constant. See mechanics/energy.py for the ledger.
 #
 # ENERGY FIELD (documented decision): energy is stored in the models row's
-# current_stamina column, capped by max_stamina (set to MAX_ENERGY at spawn).
+# current_energy column, capped by max_energy (set to MAX_ENERGY at spawn).
 # It is the depletable-capped (value, cap) pair already in the schema, and it was
 # legacy/unused, so repurposing it leaves no second live currency.
 # RETIRED by Pass 1 (no longer drained/gated/credited in the energy path):
@@ -278,7 +278,7 @@ EXPERIMENT_DURATION_DAYS = 14
 #     (the Run-2 two-budget inference economy is replaced by the energy ledger).
 #   - The Run-1 death constants DEATH_THRESHOLD / days_without_food|water as a
 #     death trigger (death is removed; see soft-lock / inactivity below).
-# token_balance remains ONLY as trade "money" (a medium of exchange, a different
+# wallet remains ONLY as trade "money" (a medium of exchange, a different
 # axis from metabolic energy); it is NOT an energy currency and Pass 1 adds no
 # energy yield to trading.
 # ----------------------------------------------------------------------------

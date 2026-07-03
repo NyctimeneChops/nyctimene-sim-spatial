@@ -185,9 +185,9 @@ class Agent:
     # ------------------------------------------------------------------ energy
 
     def _energy(self):
-        """Current energy (models.current_stamina); 0 on read failure."""
+        """Current energy (models.current_energy); 0 on read failure."""
         try:
-            return int(self._get_model().get("current_stamina", 0) or 0)
+            return int(self._get_model().get("current_energy", 0) or 0)
         except Exception as exc:
             self._log(f"energy read failed: {exc}")
             return 0

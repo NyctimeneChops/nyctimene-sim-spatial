@@ -66,14 +66,14 @@ def run_survival_check():
         INSERT INTO survival_checks (
             model_id, day_number,
             food_requirement_met, water_requirement_met, shelter_maintenance_paid,
-            stamina_end_of_day, session_budget_end_of_day, social_budget_end_of_day,
-            token_balance_end_of_day, tension_end_of_day,
+            energy_end_of_day, session_budget_end_of_day, social_budget_end_of_day,
+            wallet_end_of_day, tension_end_of_day,
             recorded_at
         ) VALUES (
             :model_id, :day_number,
             :food_met, :water_met, :shelter_maintenance_paid,
             :stamina, :session_budget, :social_budget,
-            :token_balance, :tension,
+            :wallet, :tension,
             :now
         )
     """), {
@@ -82,10 +82,10 @@ def run_survival_check():
         "food_met": food_met,
         "water_met": water_met,
         "shelter_maintenance_paid": shelter_maintenance_paid,
-        "stamina": model["current_stamina"],
+        "stamina": model["current_energy"],
         "session_budget": model["session_budget"],
         "social_budget": model["social_budget"],
-        "token_balance": model["token_balance"],
+        "wallet": model["wallet"],
         "tension": model["tension"],
         "now": now,
     })

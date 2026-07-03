@@ -44,7 +44,7 @@ def _deduct_from_inventory(model_id, resources, now):
 
 def _get_model(model_id):
     return db.session.execute(
-        text("SELECT model_id, experiment_group, is_alive, token_balance FROM models WHERE model_id = :model_id"),
+        text("SELECT model_id, experiment_group, is_alive, wallet FROM models WHERE model_id = :model_id"),
         {"model_id": model_id},
     ).mappings().one_or_none()
 
@@ -99,9 +99,9 @@ def propose():
         }), 403
 
     proposer = _get_model(proposer_id)
-    if proposer["token_balance"] < tokens_offered:
+    if proposer["wallet"] < tokens_offered:
         return jsonify({
-            "error": f"Insufficient tokens: needs {tokens_offered}, has {proposer['token_balance']}"
+            "error": f"Insufficient tokens: needs {tokens_offered}, has {proposer['wallet']}"
         }), 400
 
     for resource_type, amount in resources_offered.items():
@@ -184,7 +184,7 @@ def respond():
             return jsonify({"error": f"Model is no longer alive: {model_id}"}), 400
 
     proposer = _get_model(proposer_id)
-    if proposer["token_balance"] < tokens_offered:
+    if proposer["wallet"] < tokens_offered:
         return jsonify({"error": "Proposer no longer has sufficient tokens"}), 400
 
     err = _deduct_from_inventory(proposer_id, resources_offered, now)
@@ -200,10 +200,10 @@ def respond():
 
     if tokens_offered > 0:
         db.session.execute(text("""
-            UPDATE models SET token_balance = token_balance - :amount WHERE model_id = :model_id
+            UPDATE models SET wallet = wallet - :amount WHERE model_id = :model_id
         """), {"amount": tokens_offered, "model_id": proposer_id})
         db.session.execute(text("""
-            UPDATE models SET token_balance = token_balance + :amount WHERE model_id = :model_id
+            UPDATE models SET wallet = wallet + :amount WHERE model_id = :model_id
         """), {"amount": tokens_offered, "model_id": receiver_id})
 
     db.session.execute(text("""

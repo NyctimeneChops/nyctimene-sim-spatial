@@ -24,7 +24,7 @@ _pipeline = None
 def _parse_state(prompt):
     """
     Extract survival-relevant values from a free-text prompt string.
-    Returns (stamina, token_balance, has_eaten_today, raw_food_in_inventory).
+    Returns (stamina, wallet, has_eaten_today, raw_food_in_inventory).
     Falls back to safe defaults when a value cannot be found.
     """
     p = prompt.lower()

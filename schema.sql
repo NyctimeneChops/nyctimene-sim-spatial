@@ -20,12 +20,12 @@ CREATE TABLE models (
     experiment_group    TEXT        NOT NULL CHECK (experiment_group IN ('tunnel_C1', 'tunnel_C2', 'flat_C1', 'flat_C2')),
     run                 TEXT        NOT NULL CHECK (run IN ('token_economy')),
     -- Legacy Run 1 columns, kept for minimal diff; no game logic touches them.
-    current_stamina     INTEGER     NOT NULL,
-    max_stamina         INTEGER     NOT NULL,
+    current_energy     INTEGER     NOT NULL,
+    max_energy         INTEGER     NOT NULL,
     -- Run 2 token-budget economy: all inference is paid from these.
     session_budget      INTEGER     NOT NULL,
     social_budget       INTEGER     NOT NULL,
-    token_balance       INTEGER     NOT NULL DEFAULT 0,
+    wallet       INTEGER     NOT NULL DEFAULT 0,
     shelter_status      TEXT        NOT NULL DEFAULT 'none' CHECK (shelter_status IN ('none', 'basic', 'improved')),
     days_without_food   INTEGER     NOT NULL DEFAULT 0,
     days_without_water  INTEGER     NOT NULL DEFAULT 0,
@@ -128,10 +128,10 @@ CREATE TABLE survival_checks (
     food_requirement_met    BOOLEAN     NOT NULL,
     water_requirement_met   BOOLEAN     NOT NULL,
     shelter_maintenance_paid BOOLEAN    NOT NULL,
-    stamina_end_of_day      INTEGER     NOT NULL,
+    energy_end_of_day      INTEGER     NOT NULL,
     session_budget_end_of_day INTEGER   NOT NULL DEFAULT 0,
     social_budget_end_of_day  INTEGER   NOT NULL DEFAULT 0,
-    token_balance_end_of_day INTEGER    NOT NULL,
+    wallet_end_of_day INTEGER    NOT NULL,
     tension_end_of_day      INTEGER     NOT NULL DEFAULT 0,
     recorded_at             TIMESTAMP   NOT NULL,
     UNIQUE (model_id, day_number)

@@ -22,7 +22,7 @@ def initialize_experiment():
 
     Model IDs follow the pattern '<group_id>_<nn>' e.g. 'tunnel_C1_03'.
     Every model starts with full session/social token budgets (set server-side);
-    money (token_balance) is set according to each group's config — in Run 4
+    money (wallet) is set according to each group's config — in Run 4
     every group starts with balance 150.
     """
     initialize_world()
@@ -37,7 +37,7 @@ def initialize_experiment():
                 "model_id":         model_id,
                 "experiment_group": group_id,
                 "run":              config["run"],
-                "token_balance":    config["starting_token_balance"],
+                "wallet":    config["starting_wallet"],
             }, timeout=10)
             resp.raise_for_status()
             total += 1

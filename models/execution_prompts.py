@@ -109,7 +109,7 @@ def build_trade_proposal_prompt(model_id, inventory, target_id, target_profile):
     """
     profile_lines = [
         f"  Shelter:       {target_profile.get('shelter_status', 'unknown')}",
-        f"  Money balance: {target_profile.get('token_balance', 'unknown')}",
+        f"  Money balance: {target_profile.get('wallet', 'unknown')}",
         f"  Alive:         {target_profile.get('is_alive', 'unknown')}",
     ]
     return "\n".join([

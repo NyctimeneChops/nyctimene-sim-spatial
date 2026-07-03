@@ -15,8 +15,8 @@ def population_snapshot():
         SELECT
             model_id, experiment_group, run, is_alive,
             attention_state, is_sleeping,
-            current_stamina, max_stamina,
-            token_balance, shelter_status,
+            current_energy, max_energy,
+            wallet, shelter_status,
             days_without_food, days_without_water
         FROM models
         ORDER BY model_id
@@ -105,8 +105,8 @@ def day_snapshot(day_number):
             sc.food_requirement_met,
             sc.water_requirement_met,
             sc.shelter_maintenance_paid,
-            sc.stamina_end_of_day,
-            sc.token_balance_end_of_day
+            sc.energy_end_of_day,
+            sc.wallet_end_of_day
         FROM survival_checks sc
         JOIN models m ON m.model_id = sc.model_id
         WHERE sc.day_number = :day
@@ -114,8 +114,8 @@ def day_snapshot(day_number):
     """), {"day": day_number}).mappings().all()
 
     models_list = [dict(row) for row in survival_rows]
-    stamina_values = [r["stamina_end_of_day"] for r in models_list]
-    token_values = [r["token_balance_end_of_day"] for r in models_list]
+    stamina_values = [r["energy_end_of_day"] for r in models_list]
+    token_values = [r["wallet_end_of_day"] for r in models_list]
 
     stamina_distribution = {
         "min": min(stamina_values) if stamina_values else None,
@@ -194,10 +194,10 @@ def model_arc(model_id):
             food_requirement_met,
             water_requirement_met,
             shelter_maintenance_paid,
-            stamina_end_of_day,
-            token_balance_end_of_day,
-            token_balance_end_of_day
-                - LAG(token_balance_end_of_day, 1) OVER (ORDER BY day_number)
+            energy_end_of_day,
+            wallet_end_of_day,
+            wallet_end_of_day
+                - LAG(wallet_end_of_day, 1) OVER (ORDER BY day_number)
                 AS net_token_change
         FROM survival_checks
         WHERE model_id = :model_id
@@ -254,8 +254,8 @@ def model_arc(model_id):
             "food_requirement_met": row["food_requirement_met"],
             "water_requirement_met": row["water_requirement_met"],
             "shelter_maintenance_paid": row["shelter_maintenance_paid"],
-            "stamina_end_of_day": row["stamina_end_of_day"],
-            "token_balance_end_of_day": row["token_balance_end_of_day"],
+            "energy_end_of_day": row["energy_end_of_day"],
+            "wallet_end_of_day": row["wallet_end_of_day"],
             "net_token_change": row["net_token_change"],
             "actions_by_type": {},
             "skill_levels": {},

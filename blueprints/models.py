@@ -3,7 +3,7 @@ from sqlalchemy import text
 from extensions import db
 from constants import (
     MAX_ENERGY, MAX_SESSION_BUDGET, MAX_SOCIAL_BUDGET,
-    STARTING_TOKEN_BALANCE, VALID_SHELTER_STATES,
+    STARTING_WALLET, VALID_SHELTER_STATES,
 )
 
 models_bp = Blueprint("models", __name__, url_prefix="/models")
@@ -32,7 +32,7 @@ def get_model(model_id):
 @models_bp.route("", methods=["GET"])
 def get_models():
     rows = db.session.execute(text("""
-        SELECT model_id, experiment_group, run, is_alive, session_budget, social_budget, token_balance, shelter_status
+        SELECT model_id, experiment_group, run, is_alive, session_budget, social_budget, wallet, shelter_status
         FROM models
         ORDER BY model_id
     """)).mappings().all()
@@ -156,8 +156,8 @@ def recover_budget(model_id):
 
 @models_bp.route("/<model_id>/energy/adjust", methods=["POST"])
 def adjust_energy(model_id):
-    """Pass 1 energy ledger: apply a SIGNED delta to current_stamina (energy),
-    clamped to [0, max_stamina]. Credits (basal, consumption/rest yields) and
+    """Pass 1 energy ledger: apply a SIGNED delta to current_energy (energy),
+    clamped to [0, max_energy]. Credits (basal, consumption/rest yields) and
     debits (inference tokens, costed-action costs) all go through here so the
     0-floor and the MAX_ENERGY cap are enforced in one place. Returns the new
     energy and whether it is soft-locked (below the cheapest costed action)."""
@@ -169,9 +169,9 @@ def adjust_energy(model_id):
 
     result = db.session.execute(text("""
         UPDATE models
-        SET current_stamina = GREATEST(0, LEAST(current_stamina + :delta, max_stamina))
+        SET current_energy = GREATEST(0, LEAST(current_energy + :delta, max_energy))
         WHERE model_id = :model_id
-        RETURNING current_stamina
+        RETURNING current_energy
     """), {"model_id": model_id, "delta": delta}).one_or_none()
     db.session.commit()
 
@@ -237,21 +237,21 @@ def create_model():
     if missing:
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
-    # Pass 1: ENERGY lives in current_stamina, capped by max_stamina. Every agent
-    # starts full (current_stamina = max_stamina = MAX_ENERGY). session_budget /
+    # Pass 1: ENERGY lives in current_energy, capped by max_energy. Every agent
+    # starts full (current_energy = max_energy = MAX_ENERGY). session_budget /
     # social_budget columns remain in the schema but are retired (unused by the
     # energy path); they are set to their old maxima only to satisfy NOT NULLs.
     db.session.execute(text("""
         INSERT INTO models (
             model_id, experiment_group, run,
-            current_stamina, max_stamina,
-            session_budget, social_budget, token_balance,
+            current_energy, max_energy,
+            session_budget, social_budget, wallet,
             shelter_status, days_without_food, days_without_water,
             is_alive, attention_state, is_sleeping
         ) VALUES (
             :model_id, :experiment_group, :run,
             :max_energy, :max_energy,
-            :session_budget, :social_budget, :token_balance,
+            :session_budget, :social_budget, :wallet,
             'none', 0, 0,
             TRUE, 'free', FALSE
         )
@@ -262,7 +262,7 @@ def create_model():
         "run": data["run"],
         "session_budget": data.get("session_budget", MAX_SESSION_BUDGET),
         "social_budget": data.get("social_budget", MAX_SOCIAL_BUDGET),
-        "token_balance": data.get("token_balance", STARTING_TOKEN_BALANCE),
+        "wallet": data.get("wallet", STARTING_WALLET),
     })
     db.session.commit()
 

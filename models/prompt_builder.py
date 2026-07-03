@@ -167,8 +167,8 @@ def build_prompt(model_id):
     has_eaten = any(a["action_type"] == "eat"   and a["succeeded"] for a in actions_today)
     has_drunk = any(a["action_type"] == "drink" and a["succeeded"] for a in actions_today)
 
-    # Pass 1: energy is the single currency, stored in current_stamina.
-    energy = int(model.get("current_stamina", 0) or 0)
+    # Pass 1: energy is the single currency, stored in current_energy.
+    energy = int(model.get("current_energy", 0) or 0)
 
     inventory = {k: v for k, v in model.get("inventory", {}).items() if v > 0}
 

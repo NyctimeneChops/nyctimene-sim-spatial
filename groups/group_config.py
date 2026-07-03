@@ -1,4 +1,4 @@
-from constants import HAS_DEATH_GROUPS, HAS_TOKENS_GROUPS, STARTING_TOKEN_BALANCE
+from constants import HAS_DEATH_GROUPS, HAS_TOKENS_GROUPS, STARTING_WALLET
 
 # Run 4 tunneling ablation: 4 sealed worlds, 8 agents each (32 total). Two
 # conditions x two replicates. Money (starting balance 150) and death are ON in
@@ -26,30 +26,30 @@ GROUP_CONFIGS = {
     "tunnel_C1": {
         "run": "token_economy", "group": "C1",
         "has_tokens": True, "has_death": True, "model_count": 8,
-        "starting_token_balance": STARTING_TOKEN_BALANCE,
+        "starting_wallet": STARTING_WALLET,
         "tunneling_enabled": True,
-        "description": _TUNNEL_DESC.format(bal=STARTING_TOKEN_BALANCE, rep="C1"),
+        "description": _TUNNEL_DESC.format(bal=STARTING_WALLET, rep="C1"),
     },
     "tunnel_C2": {
         "run": "token_economy", "group": "C2",
         "has_tokens": True, "has_death": True, "model_count": 8,
-        "starting_token_balance": STARTING_TOKEN_BALANCE,
+        "starting_wallet": STARTING_WALLET,
         "tunneling_enabled": True,
-        "description": _TUNNEL_DESC.format(bal=STARTING_TOKEN_BALANCE, rep="C2"),
+        "description": _TUNNEL_DESC.format(bal=STARTING_WALLET, rep="C2"),
     },
     "flat_C1": {
         "run": "token_economy", "group": "C1",
         "has_tokens": True, "has_death": True, "model_count": 8,
-        "starting_token_balance": STARTING_TOKEN_BALANCE,
+        "starting_wallet": STARTING_WALLET,
         "tunneling_enabled": False,
-        "description": _FLAT_DESC.format(bal=STARTING_TOKEN_BALANCE, rep="C1"),
+        "description": _FLAT_DESC.format(bal=STARTING_WALLET, rep="C1"),
     },
     "flat_C2": {
         "run": "token_economy", "group": "C2",
         "has_tokens": True, "has_death": True, "model_count": 8,
-        "starting_token_balance": STARTING_TOKEN_BALANCE,
+        "starting_wallet": STARTING_WALLET,
         "tunneling_enabled": False,
-        "description": _FLAT_DESC.format(bal=STARTING_TOKEN_BALANCE, rep="C2"),
+        "description": _FLAT_DESC.format(bal=STARTING_WALLET, rep="C2"),
     },
 }
 

@@ -4,7 +4,7 @@ Participation energy ledger (Pass 1) - participation_economy_spec.md sections 2-
 This module is the SINGLE SOURCE OF TRUTH for every energy transition, and it is
 deliberately PURE: no HTTP, no DB, no threads. Given a balance (and the tick's
 inputs) it returns the next balance. agent.py wires these to the DB-backed energy
-field (models.current_stamina); the deterministic ledger test drives them directly
+field (models.current_energy); the deterministic ledger test drives them directly
 with a stubbed inference cost. Keeping the math here (not in the agent loop) is
 what makes the economy testable without a GPU.
 

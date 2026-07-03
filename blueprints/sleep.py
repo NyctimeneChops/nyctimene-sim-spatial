@@ -25,7 +25,7 @@ def start_sleep():
     day_number = data["day_number"]
 
     model = db.session.execute(
-        text("SELECT model_id, is_alive, is_sleeping, current_stamina FROM models WHERE model_id = :model_id"),
+        text("SELECT model_id, is_alive, is_sleeping, current_energy FROM models WHERE model_id = :model_id"),
         {"model_id": model_id},
     ).mappings().one_or_none()
 
@@ -50,7 +50,7 @@ def start_sleep():
         "model_id": model_id,
         "day_number": day_number,
         "now": now,
-        "stamina": model["current_stamina"],
+        "stamina": model["current_energy"],
     }).scalar()
 
     db.session.commit()
@@ -59,7 +59,7 @@ def start_sleep():
         "sleep_id": sleep_id,
         "model_id": model_id,
         "sleep_started_at": now.isoformat(),
-        "stamina_at_start": model["current_stamina"],
+        "stamina_at_start": model["current_energy"],
     }), 201
 
 
@@ -73,7 +73,7 @@ def end_sleep():
     model_id = data["model_id"]
 
     model = db.session.execute(
-        text("SELECT model_id, is_alive, is_sleeping, current_stamina, session_budget, social_budget FROM models WHERE model_id = :model_id"),
+        text("SELECT model_id, is_alive, is_sleeping, current_energy, session_budget, social_budget FROM models WHERE model_id = :model_id"),
         {"model_id": model_id},
     ).mappings().one_or_none()
 

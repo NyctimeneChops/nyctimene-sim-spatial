@@ -90,7 +90,7 @@ def _print_startup_summary():
             c["run"],
             "yes" if c["has_tokens"] else "no",
             "yes" if c["has_death"]  else "no",
-            str(c["starting_token_balance"]),
+            str(c["starting_wallet"]),
             str(c["model_count"]),
         ))
     col_widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]

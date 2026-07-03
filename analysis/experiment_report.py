@@ -179,10 +179,10 @@ def report_tokens(cur):
         SELECT
             experiment_group,
             COUNT(*)                                                   AS n,
-            MIN(token_balance)                                         AS min_bal,
-            MAX(token_balance)                                         AS max_bal,
-            ROUND(AVG(token_balance), 1)                               AS avg_bal,
-            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY token_balance) AS median_bal
+            MIN(wallet)                                         AS min_bal,
+            MAX(wallet)                                         AS max_bal,
+            ROUND(AVG(wallet), 1)                               AS avg_bal,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY wallet) AS median_bal
         FROM models
         GROUP BY experiment_group
         ORDER BY experiment_group

@@ -38,9 +38,9 @@ def seed():
     for mid in ("group_A_01", "group_A_02"):
         MODELS[mid] = {
             "model_id": mid, "experiment_group": "group_A", "run": "token_economy",
-            "current_stamina": 100, "max_stamina": 100,
+            "current_energy": 100, "max_energy": 100,
             "session_budget": MAX_SESSION_BUDGET, "social_budget": MAX_SOCIAL_BUDGET,
-            "token_balance": 0, "shelter_status": "none",
+            "wallet": 0, "shelter_status": "none",
             "days_without_food": 0, "days_without_water": 0,
             "is_alive": True, "attention_state": "free", "is_sleeping": False,
         }

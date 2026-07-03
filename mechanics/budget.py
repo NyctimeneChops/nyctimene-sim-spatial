@@ -98,7 +98,7 @@ def apply_passive_social_recovery(model_id):
 
 # ------------------------------------------------------------------ legacy API
 # Back-compat no-op shims for the Run 1 stamina interface. Nothing drains or
-# recovers current_stamina any more; these exist only so old call sites and
+# recovers current_energy any more; these exist only so old call sites and
 # imports keep working.
 
 def calculate_stamina_cost(base_cost, action_type, model_id):
@@ -115,7 +115,7 @@ def recover_stamina(model_id, amount):
     """Legacy shim — no stamina is recovered. Returns the unchanged value."""
     resp = requests.get(f"{BASE_URL}/models/{model_id}", timeout=10)
     resp.raise_for_status()
-    return resp.json()["current_stamina"]
+    return resp.json()["current_energy"]
 
 
 def get_stamina_state(model_id):
@@ -123,7 +123,7 @@ def get_stamina_state(model_id):
     resp = requests.get(f"{BASE_URL}/models/{model_id}", timeout=10)
     resp.raise_for_status()
     model = resp.json()
-    current = model["current_stamina"]
-    maximum = model["max_stamina"]
+    current = model["current_energy"]
+    maximum = model["max_energy"]
     percentage = round(current / maximum * 100, 1) if maximum > 0 else 0.0
     return {"current": current, "maximum": maximum, "percentage": percentage}
