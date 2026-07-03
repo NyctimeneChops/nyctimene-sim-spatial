@@ -33,3 +33,6 @@ flask*.err
 # --- os cruft ---
 Thumbs.db
 .DS_Store
+
+# smoke-test artifacts
+_smoke_real_prompt.txt
