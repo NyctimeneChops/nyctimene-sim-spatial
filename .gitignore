@@ -1,0 +1,35 @@
+# --- secrets / credentials / local config (NEVER commit) ---
+secrets/
+.env
+.env.*
+*.pem
+*_token.json
+*token*.json
+*secret*.json
+*credential*
+hf_token.json
+gmail_oauth.json
+operator_intake.json
+claude_env
+.claude/
+
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# --- run data dumps (not source; recoverable, keep the repo code-only) ---
+run2_official.sql
+run2_tempo_collapse.sql
+*_official.sql
+
+# --- flask / runtime logs ---
+flask*.log
+flask*.err
+*.log
+
+# --- os cruft ---
+Thumbs.db
+.DS_Store

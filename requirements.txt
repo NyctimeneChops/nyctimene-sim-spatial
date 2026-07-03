@@ -1,0 +1,9 @@
+Flask==3.0.3
+psycopg2-binary
+python-dotenv
+Flask-SQLAlchemy
+requests
+transformers
+torch
+accelerate
+sentencepiece
