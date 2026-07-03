@@ -1,33 +1,57 @@
 """
-Live-loop smoke test (Pass 1) with USE_MOCK_INFERENCE=True. NO GPU.
+Live-loop smoke test (Pass 1 v1) with USE_MOCK_INFERENCE=True, MOCK burn = 1500.
+NO GPU. Drives the REAL Flask app + DB + Agent loop + real prompt builder against a
+throwaway Postgres.
 
-Starts the real Flask ledger app as a subprocess against a throwaway Postgres,
-then drives a few real Agent threads through the REAL tick loop / execute_action
-/ energy ledger / prompt builder, and checks:
-  - agents spawn at max_energy
-  - the energy ledger applies per tick (basal -> inference debit -> action)
-  - costed actions gate on affordability (harvest DENIED when energy < cost)
-  - soft-lock and the inactivity flag trigger
-  - the run-termination condition (all agents inactive) is reachable
-Also captures one REAL built prompt for token-cost measurement.
-
-Env expected: DATABASE_URL (throwaway pg), set by the caller.
+The DECISION is mocked (no GPU) via scripted per-agent policies so we can
+deterministically exercise every economic path with the calibrated v1 constants
+(the real model makes these choices itself in the real run). Every decision
+reports tokens_used = 1500 (the measured real per-thought burn). Roles:
+  survivor  (x2): harvest apple -> eat apple  (closes the loop)  -> should SUSTAIN
+  harvester (x1): always harvest, never eat                      -> should SOFT-LOCK (~1.3 day)
+  thinker   (x1): always message (idle think)                    -> should BLEED
 """
-import os, sys, time, subprocess, requests
+import os, sys, time, json, subprocess, requests
 
 BASE = "http://127.0.0.1:5000"
 os.environ["USE_MOCK_INFERENCE"] = "True"
 os.environ.setdefault("FLASK_SECRET_KEY", "smoke")
 os.environ.setdefault("EXPERIMENT_RUN_NAME", "smoke")
+BURN = 1500  # measured real per-decision cost
 
-PY = sys.executable
 results = []
 def ck(name, ok, detail=""):
-    results.append(ok)
-    print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
+    results.append(ok); print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
 
-# ---- 1. start the real Flask app as a subprocess -------------------------
-app = subprocess.Popen([PY, "app.py"], env=os.environ.copy(),
+EDIBLES = ("apple", "potato_cooked", "grain_cooked", "meat_cooked", "bread")
+RAWS = ("potato_raw", "grain_raw", "meat_raw")
+
+def _held(model_id):
+    inv = requests.get(BASE + f"/inventory/{model_id}", timeout=10).json()["inventory"]
+    return {r["resource_type"]: r["quantity"] for r in inv}
+
+def policy(prompt, model_id):
+    """Scripted mock decision (no GPU). tokens_used = the real measured burn."""
+    role = ROLES[model_id]
+    if role == "survivor":
+        h = _held(model_id)
+        ed = next((e for e in EDIBLES if h.get(e, 0) > 0), None)
+        rw = next((r for r in RAWS if h.get(r, 0) > 0), None)
+        if ed:
+            act = {"action_type": "eat", "target": ed, "reasoning": "holding edible; eat to refuel and stay able to act"}
+        elif rw:
+            act = {"action_type": "cook", "target": rw, "reasoning": "holding raw; cook it"}
+        else:
+            act = {"action_type": "harvest", "target": "apple", "reasoning": "no food; harvest apples to eat"}
+    elif role == "harvester":
+        # harvest a NON-food node (wood) so it never competes with survivors for
+        # apples; it still pays COST_HARVEST every tick and never eats -> bleeds.
+        act = {"action_type": "harvest", "target": "forest", "reasoning": "harvest wood only; never eat (stress the bleed)"}
+    else:  # thinker
+        act = {"action_type": "message", "target": "broadcast", "reasoning": "idle thought, no other action"}
+    return {"response": json.dumps(act), "tokens_used": BURN}
+
+app = subprocess.Popen([sys.executable, "app.py"], env=os.environ.copy(),
                        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -35,93 +59,96 @@ try:
         try:
             if requests.get(BASE + "/health", timeout=2).json().get("database") == "connected":
                 up = True; break
-        except Exception:
-            pass
+        except Exception: pass
         time.sleep(0.5)
-    ck("Flask ledger app is up and DB-connected", up)
-    if not up:
-        raise SystemExit("app did not come up")
+    ck("Flask ledger app up + DB-connected", up)
+    if not up: raise SystemExit("app did not come up")
 
-    # ---- 2. speed up the real agent loop (no code change; patch the module
-    #         globals the loop reads) so ticks run in ms, not 175s ----------
     import models.agent as agent_mod
     agent_mod.ACTION_INTERVAL_SECONDS = 0.05
     agent_mod.LOOP_DELAY_SECONDS = 0.05
+    agent_mod.get_model_decision = policy   # scripted mock (build_prompt still runs each tick)
 
     from world.environment import initialize_world
     from groups.group_config import get_group_config
     from models.agent import Agent
-    from models.prompt_builder import build_prompt
     from mechanics import energy as E
     from constants import MAX_ENERGY, INACTIVITY_THRESHOLD_TICKS
 
     initialize_world()
     GROUP = "flat_C1"
-    ids = [f"{GROUP}_{i:02d}" for i in (1, 2, 3)]
-    for mid in ids:
-        requests.post(BASE + "/models", json={
-            "model_id": mid, "experiment_group": GROUP,
-            "run": "token_economy", "wallet": 150}, timeout=10)
+    ROLES = {f"{GROUP}_01": "survivor", f"{GROUP}_02": "survivor",
+             f"{GROUP}_03": "harvester", f"{GROUP}_04": "thinker"}
+    for mid in ROLES:
+        requests.post(BASE + "/models", json={"model_id": mid, "experiment_group": GROUP,
+                                              "run": "token_economy", "wallet": 150}, timeout=10)
 
-    m0 = requests.get(BASE + f"/models/{ids[0]}", timeout=10).json()
-    ck("agents spawn at max_energy",
-       m0["current_energy"] == MAX_ENERGY and m0["max_energy"] == MAX_ENERGY,
-       f"current_energy={m0['current_energy']} max_energy={m0['max_energy']}")
+    spawn = {mid: requests.get(BASE + f"/models/{mid}", timeout=10).json()["current_energy"] for mid in ROLES}
+    ck("all agents spawn at MAX_ENERGY (30000)",
+       all(v == MAX_ENERGY for v in spawn.values()), f"{spawn}")
 
-    # ---- 3. run the real agent threads briefly ---------------------------
-    agents = [Agent(mid, get_group_config(GROUP)) for mid in ids]
-    e_start = requests.get(BASE + f"/models/{ids[0]}", timeout=10).json()["current_energy"]
-    for a in agents:
-        a.start()
-    # let them bleed energy via costed actions, soft-lock, then accumulate
-    # enough consecutive soft-locked ticks to trip the inactivity flag
-    # (INACTIVITY_THRESHOLD_TICKS). The mock never eats, so they never recover.
-    deadline = time.time() + 40
-    captured_prompt = None
-    while time.time() < deadline:
-        time.sleep(1)
-        if captured_prompt is None:
-            try:
-                captured_prompt = build_prompt(ids[0])  # a REAL built prompt
-            except Exception:
-                pass
-    for a in agents:
-        a.stop()
+    agents = [Agent(mid, get_group_config(GROUP)) for mid in ROLES]
+    for a in agents: a.start()
+
+    # poll energy + action count over the run
+    traj = {mid: [] for mid in ROLES}
+    softlock_tick = {mid: None for mid in ROLES}
+    t0 = time.time()
+    _day = 1
+    _last_reset = 0.0
+    while time.time() - t0 < 30:
+        # Simulate day-boundary node regen (the fast smoke never reaches a real
+        # 30-min day boundary, so food nodes would otherwise deplete permanently
+        # and starve even a perfect loop-closer). This is the real day-start hook.
+        if time.time() - _last_reset > 3.0:
+            _day += 1
+            try: requests.post(BASE + "/nodes/reset", json={"day_number": _day}, timeout=10)
+            except Exception: pass
+            _last_reset = time.time()
+        for mid in ROLES:
+            e = requests.get(BASE + f"/models/{mid}", timeout=10).json()["current_energy"]
+            n = len(requests.get(BASE + f"/actions/{mid}", params={"limit": 999}, timeout=10).json())
+            traj[mid].append((round(time.time() - t0, 1), e, n))
+            if softlock_tick[mid] is None and e < E.SOFT_LOCK_THRESHOLD:
+                softlock_tick[mid] = n  # ~tick index at first soft-lock
+        time.sleep(0.7)
+    for a in agents: a.stop()
     time.sleep(0.6)
 
-    # ---- 4. inspect the outcome -----------------------------------------
-    e_end = requests.get(BASE + f"/models/{ids[0]}", timeout=10).json()["current_energy"]
-    acts = requests.get(BASE + f"/actions/{ids[0]}", params={"limit": 2000}, timeout=10).json()
-    COSTED = ("harvest", "cook", "build")
-    costed_acts = [a for a in acts if a["action_type"] in COSTED]
-    costed_denied = [a for a in costed_acts if not a["succeeded"]]
-    ck("energy ledger applied over the run (energy moved from full)",
-       e_end != e_start, f"{e_start} -> {e_end}")
-    ck("costed action executed at least once (harvest/cook/build)", len(costed_acts) > 0,
-       f"{len(costed_acts)} costed actions recorded")
-    ck("costed action was DENIED when energy < cost (soft-locked)",
-       len(costed_denied) > 0, f"{len(costed_denied)} denied costed actions")
-    ck("soft-lock reached (energy below cheapest costed action)",
-       E.is_soft_locked(e_end), f"end energy {e_end} < {E.SOFT_LOCK_THRESHOLD}")
-    inactive_flags = [getattr(a, "_inactive", False) for a in agents]
-    streaks = [getattr(a, "_softlock_streak", 0) for a in agents]
-    ck("inactivity flag triggered (>= INACTIVITY_THRESHOLD_TICKS soft-locked)",
-       any(inactive_flags), f"inactive={inactive_flags} streaks={streaks} thr={INACTIVITY_THRESHOLD_TICKS}")
-    ck("run-termination condition reachable (all agents inactive)",
-       all(inactive_flags), f"all_inactive={all(inactive_flags)}")
+    print("\n--- ENERGY TRAJECTORY (sampled; energy @ action-count) ---")
+    for mid in ROLES:
+        s = traj[mid]
+        pts = " ".join(f"{e//1000}k@{n}" for (_, e, n) in s[::max(1, len(s)//10)])
+        print(f"  {mid} [{ROLES[mid]:>9}]  {pts}")
+        print(f"      final energy={s[-1][1]}  ticks={s[-1][2]}  "
+              f"inactive={getattr([a for a in agents if a.model_id==mid][0],'_inactive')}  "
+              f"softlock@tick={softlock_tick[mid]}")
 
-    # decision_log populated (trainability invariant still holds)
-    dl = requests.get(BASE + f"/decision_log/recent/{ids[0]}", params={"limit": 5}, timeout=10).json()
-    ck("decision_log is being written", len(dl) > 0, f"{len(dl)} recent decision rows")
+    surv = [mid for mid, r in ROLES.items() if r == "survivor"]
+    harv = f"{GROUP}_03"; think = f"{GROUP}_04"
+    fin = {mid: traj[mid][-1][1] for mid in ROLES}
 
-    # ---- 5. persist the captured real prompt for token measurement -------
-    if captured_prompt:
-        with open("_smoke_real_prompt.txt", "w", encoding="utf-8") as f:
-            f.write(captured_prompt)
-        print(f"\n  real built prompt captured: {len(captured_prompt)} chars "
-              f"-> _smoke_real_prompt.txt")
-        print("  --- prompt head ---")
-        print("\n".join("  " + l for l in captured_prompt.splitlines()[:6]))
+    print("\n--- CHECKS ---")
+    ck("survivors (harvest->eat loop) SUSTAIN (stay well-funded, not soft-locked)",
+       all(fin[m] > 10000 and not E.is_soft_locked(fin[m]) for m in surv),
+       f"survivor finals = {[fin[m] for m in surv]}")
+    ck("never-eater (harvester) SOFT-LOCKS", E.is_soft_locked(fin[harv]),
+       f"final={fin[harv]}, softlock@tick={softlock_tick[harv]}")
+    ck("never-eater soft-locks in ~1.3 days (~13 ticks; day = %d ticks)" % INACTIVITY_THRESHOLD_TICKS,
+       softlock_tick[harv] is not None and softlock_tick[harv] <= 16,
+       f"softlock@tick {softlock_tick[harv]} / {INACTIVITY_THRESHOLD_TICKS} ticks-per-day")
+    ck("think-only BLEEDS (energy strictly declined from spawn)",
+       fin[think] < MAX_ENERGY and fin[think] < traj[think][0][1],
+       f"{MAX_ENERGY} -> {fin[think]}")
+    ck("energy SPREAD across agents (loop-closers high, non-eaters low)",
+       min(fin[m] for m in surv) - max(fin[harv], fin[think]) > 8000,
+       f"survivors {[fin[m] for m in surv]} vs harvester {fin[harv]} / thinker {fin[think]}")
+    # loop mechanics still correct under the real prompt path
+    acts03 = requests.get(BASE + f"/actions/{harv}", params={"limit": 999}, timeout=10).json()
+    denied = [a for a in acts03 if a["action_type"] == "harvest" and not a["succeeded"]]
+    ck("costed action DENIED once broke (harvester)", len(denied) > 0, f"{len(denied)} denied harvests")
+    dl = requests.get(BASE + f"/decision_log/recent/{surv[0]}", params={"limit": 3}, timeout=10).json()
+    ck("decision_log written", len(dl) > 0, f"{len(dl)} rows")
 
     print("\n" + "=" * 60)
     print(f"SMOKE RESULT: {sum(results)}/{len(results)} checks passed")
@@ -129,7 +156,5 @@ try:
     sys.exit(0 if all(results) else 1)
 finally:
     app.terminate()
-    try:
-        app.wait(timeout=10)
-    except Exception:
-        app.kill()
+    try: app.wait(timeout=10)
+    except Exception: app.kill()
