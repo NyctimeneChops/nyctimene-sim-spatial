@@ -214,6 +214,17 @@ def _get_pipeline():
     if _pipeline is not None:
         return _pipeline
     import torch
+    # torch 2.4 lacks nn.Module.set_submodule (added in 2.5); some peft/transformers
+    # adapter-load paths call it. Backfill so ADAPTER_PATHS serving works on the 2.4 image.
+    if not hasattr(torch.nn.Module, "set_submodule"):
+        def _set_submodule(self, target, module):
+            atoms = target.split(".")
+            name = atoms.pop()
+            mod = self
+            for a in atoms:
+                mod = getattr(mod, a)
+            setattr(mod, name, module)
+        torch.nn.Module.set_submodule = _set_submodule
     from transformers import AutoTokenizer, AutoModelForCausalLM
     tokenizer = AutoTokenizer.from_pretrained(INFERENCE_MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
