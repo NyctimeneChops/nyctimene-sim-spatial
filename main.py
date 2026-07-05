@@ -193,6 +193,21 @@ def main():
     print("nyctimene experiment — starting up")
     print()
 
+    # World seed (added for the neuroevolution lineage): if EXPERIMENT_SEED is set,
+    # seed Python's global RNG at startup so the world's random rolls (harvest
+    # success, node selection, etc.) are pinned to that seed. Each generation runs
+    # on a DIFFERENT seed on purpose (generalization), and the seed is recorded in
+    # the per-generation record. Real-model decisions are still non-deterministic
+    # (GPU temperature sampling) -- the seed governs the WORLD, not the policy.
+    _seed = os.getenv("EXPERIMENT_SEED")
+    if _seed not in (None, ""):
+        import random
+        random.seed(int(_seed))
+        print(f"World seed set: EXPERIMENT_SEED={_seed}")
+    else:
+        print("No EXPERIMENT_SEED set -- world RNG unseeded (system entropy).")
+    print()
+
     _check_health()
     assert_decision_log_table()
     _print_startup_summary()
