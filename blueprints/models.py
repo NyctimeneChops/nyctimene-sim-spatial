@@ -32,7 +32,8 @@ def get_model(model_id):
 @models_bp.route("", methods=["GET"])
 def get_models():
     rows = db.session.execute(text("""
-        SELECT model_id, experiment_group, run, is_alive, session_budget, social_budget, wallet, shelter_status
+        SELECT model_id, experiment_group, run, is_alive, session_budget, social_budget, wallet, shelter_status,
+               pos_x, pos_y, shelter_x, shelter_y
         FROM models
         ORDER BY model_id
     """)).mappings().all()
@@ -212,20 +213,62 @@ def update_tension(model_id):
 
 @models_bp.route("/<model_id>/shelter", methods=["POST"])
 def update_shelter(model_id):
+    """SPATIAL CLEANUP: shelter is a positional POINT-CLAIM owned by this model.
+    - status 'none' RELEASES the claim: shelter_x/y set NULL, freeing the point.
+    - status basic/improved with pos_x/pos_y: (re)claim that point (a build).
+    - status basic/improved without coords: in-place upgrade (keep the existing claim)."""
     data = request.get_json()
     new_status = data.get("shelter_status")
     if new_status not in VALID_SHELTER_STATES:
         return jsonify({"error": f"Invalid shelter_status: {new_status}"}), 400
 
-    result = db.session.execute(text("""
-        UPDATE models SET shelter_status = :status WHERE model_id = :model_id
-        RETURNING shelter_status
-    """), {"status": new_status, "model_id": model_id}).one_or_none()
+    if new_status == "none":
+        result = db.session.execute(text("""
+            UPDATE models SET shelter_status = 'none', shelter_x = NULL, shelter_y = NULL
+            WHERE model_id = :model_id
+            RETURNING shelter_status, shelter_x, shelter_y
+        """), {"model_id": model_id}).mappings().one_or_none()
+    elif "pos_x" in data and "pos_y" in data:
+        result = db.session.execute(text("""
+            UPDATE models SET shelter_status = :status, shelter_x = :px, shelter_y = :py
+            WHERE model_id = :model_id
+            RETURNING shelter_status, shelter_x, shelter_y
+        """), {"status": new_status, "px": float(data["pos_x"]), "py": float(data["pos_y"]),
+               "model_id": model_id}).mappings().one_or_none()
+    else:
+        result = db.session.execute(text("""
+            UPDATE models SET shelter_status = :status WHERE model_id = :model_id
+            RETURNING shelter_status, shelter_x, shelter_y
+        """), {"status": new_status, "model_id": model_id}).mappings().one_or_none()
     db.session.commit()
 
     if result is None:
         return jsonify({"error": "Model not found"}), 404
-    return jsonify({"model_id": model_id, "shelter_status": result[0]})
+    return jsonify({"model_id": model_id, **dict(result)})
+
+
+@models_bp.route("/<model_id>/position", methods=["POST"])
+def update_position(model_id):
+    """SPACE MILESTONE pass 1: set the agent's CURRENT position (pos_x, pos_y) after
+    a successful teleport move. spawn_x/spawn_y are IMMUTABLE and never touched here."""
+    data = request.get_json()
+    if data is None or "pos_x" not in data or "pos_y" not in data:
+        return jsonify({"error": "pos_x and pos_y required"}), 400
+    # SPATIAL CLEANUP: every position write also sets spatial_note -- the graceful-
+    # displacement message for the NEXT prompt (empty string when the move landed on target,
+    # so a clean move clears any stale note).
+    note = data.get("note", "")
+    result = db.session.execute(text("""
+        UPDATE models SET pos_x = :pos_x, pos_y = :pos_y, spatial_note = :note
+        WHERE model_id = :model_id
+        RETURNING pos_x, pos_y
+    """), {"model_id": model_id, "pos_x": float(data["pos_x"]), "pos_y": float(data["pos_y"]),
+           "note": note})
+    row = result.fetchone()
+    db.session.commit()
+    if row is None:
+        return jsonify({"error": "model not found"}), 404
+    return jsonify({"model_id": model_id, "pos_x": row[0], "pos_y": row[1]}), 200
 
 
 @models_bp.route("", methods=["POST"])
@@ -241,19 +284,24 @@ def create_model():
     # starts full (current_energy = max_energy = MAX_ENERGY). session_budget /
     # social_budget columns remain in the schema but are retired (unused by the
     # energy path); they are set to their old maxima only to satisfy NOT NULLs.
+    # SPACE MILESTONE pass 1: spawn position. The caller (world init) passes the
+    # placed (pos_x, pos_y); at creation the CURRENT position and the IMMUTABLE
+    # spawn position are the same point. Defaults to (0,0) if omitted (legacy).
     db.session.execute(text("""
         INSERT INTO models (
             model_id, experiment_group, run,
             current_energy, max_energy,
             session_budget, social_budget, wallet,
             shelter_status, days_without_food, days_without_water,
-            is_alive, attention_state, is_sleeping
+            is_alive, attention_state, is_sleeping,
+            pos_x, pos_y, spawn_x, spawn_y
         ) VALUES (
             :model_id, :experiment_group, :run,
             :max_energy, :max_energy,
             :session_budget, :social_budget, :wallet,
             'none', 0, 0,
-            TRUE, 'free', FALSE
+            TRUE, 'free', FALSE,
+            :pos_x, :pos_y, :pos_x, :pos_y
         )
     """), {
         "max_energy": MAX_ENERGY,
@@ -263,6 +311,8 @@ def create_model():
         "session_budget": data.get("session_budget", MAX_SESSION_BUDGET),
         "social_budget": data.get("social_budget", MAX_SOCIAL_BUDGET),
         "wallet": data.get("wallet", STARTING_WALLET),
+        "pos_x": float(data.get("pos_x", 0.0)),
+        "pos_y": float(data.get("pos_y", 0.0)),
     })
     db.session.commit()
 

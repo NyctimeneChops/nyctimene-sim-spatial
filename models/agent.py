@@ -13,6 +13,7 @@ from constants import (
     TOOL_CRAFT_RECIPES, TOOL_NAMES, WELL_BUILD_COST,
 )
 from mechanics import energy as energy_mod
+from mechanics import geometry, movement   # SPACE pass 1: teleport-per-tick move
 from mechanics import tension
 from mechanics.communication import (
     get_available_threads, propose_direct,
@@ -236,6 +237,132 @@ class Agent:
             return True
         return False
 
+    def _charge_move(self, distance):
+        """Tick step 3 (move): gate + debit the DISTANCE-based move cost. Returns
+        (applied, cost). applied False => DENIED (no debit, no position change)."""
+        cost = movement.move_cost(distance)
+        if self._energy() >= cost:
+            self._adjust_energy(-cost)
+            return True, cost
+        return False, cost
+
+    # ---------------------------------------------------- SPACE pass 3: presence
+
+    def _at_node(self, node):
+        """True if this agent is AT `node` (within AT_NODE_EPSILON of its coords).
+        Presence precondition for node-located actions (harvest, build-well)."""
+        model = self._get_model() or {}
+        ax = float(model.get("pos_x", 0.0) or 0.0)
+        ay = float(model.get("pos_y", 0.0) or 0.0)
+        nx = float(node.get("pos_x", 0.0) or 0.0)
+        ny = float(node.get("pos_y", 0.0) or 0.0)
+        return movement.at_node(ax, ay, nx, ny)
+
+    def _move_obstacles(self):
+        """Occupied points that DISPLACE a non-node move/build in this SEALED group: the
+        OTHER agents' positions + the OTHER-owned shelter points. This agent's OWN shelter
+        is NOT an obstacle (the owner may land exactly on its own shelter point)."""
+        try:
+            models = requests.get(f"{BASE_URL}/models", timeout=10).json()
+        except Exception as exc:
+            self._log(f"obstacles: model list fetch failed: {exc}")
+            return []
+        grp = self._group_id()
+        obstacles = []
+        for m in models:
+            if m.get("experiment_group") != grp or m.get("model_id") == self.model_id:
+                continue
+            obstacles.append((float(m.get("pos_x", 0.0) or 0.0), float(m.get("pos_y", 0.0) or 0.0)))
+            sx, sy = m.get("shelter_x"), m.get("shelter_y")
+            if sx is not None and sy is not None:
+                obstacles.append((float(sx), float(sy)))   # other-owned shelter point
+        return obstacles
+
+    def _resolve_move_target(self, target):
+        """Resolve a move target to (x, y, is_node, label). Target is EITHER a node type
+        (-> that node's point in this group, is_node=True, exempt from displacement) OR
+        'x,y' coordinates (-> that exact point, is_node=False, subject to displacement)."""
+        try:
+            nodes = requests.get(f"{BASE_URL}/nodes",
+                                 params={"group": self._group_id()}, timeout=10).json()
+        except Exception:
+            nodes = []
+        node = next((n for n in nodes if n["node_type"] == target), None)
+        if node is not None:
+            return (float(node.get("pos_x", 0.0) or 0.0), float(node.get("pos_y", 0.0) or 0.0),
+                    True, f"{target}(node)")
+        if isinstance(target, str) and "," in target:
+            try:
+                xs, ys = target.split(",", 1)
+                x, y = float(xs), float(ys)
+                return (x, y, False, f"({x:.0f},{y:.0f})")
+            except (ValueError, TypeError):
+                pass
+        return (None, None, False, str(target))
+
+    def _set_position(self, x, y, note=""):
+        """Write the agent's position AND the spatial_note (graceful-displacement message
+        for the next prompt; '' clears any stale note)."""
+        try:
+            requests.post(f"{BASE_URL}/models/{self.model_id}/position",
+                          json={"pos_x": x, "pos_y": y, "note": note}, timeout=10)
+        except Exception as exc:
+            self._log(f"position update failed: {exc}")
+
+    # -------------------------------------------------------------------- move
+
+    def _handle_move(self, action, decision_tokens):
+        """SPACE pass 1: teleport-per-tick move to a node's position in THIS agent's
+        sealed group-world. Pays energy = round(euclidean(current, dest) *
+        MOVE_COST_PER_UNIT). DENIED if unaffordable (no debit beyond the inference,
+        no position change). On success the stored position jumps to the destination
+        the SAME tick."""
+        target = action["target"]
+        self._charge(decision_tokens)   # inference is always billed
+
+        model = self._get_model() or {}
+        cur_x = float(model.get("pos_x", 0.0) or 0.0)
+        cur_y = float(model.get("pos_y", 0.0) or 0.0)
+
+        # Resolve the TARGET point: a node (its point, exempt from displacement / stackable)
+        # or explicit "x,y" coordinates (subject to graceful displacement).
+        tx, ty, is_node, label = self._resolve_move_target(target)
+        if tx is None:
+            self._record_action("move", False, decision_tokens, 1, 1)
+            self._log(f"move: could not resolve target '{target}'")
+            return
+
+        # GRACEFUL DISPLACEMENT (cleanup): resolve the target to an actual landing point.
+        # Obstacles = other agents + other-owned shelter points (same group). Node targets
+        # land exactly (co-harvest stacking). An occupied non-node target lands at the
+        # nearest free point toward the target; the dormant deny-threshold hook can refuse.
+        r = movement.resolve_landing(cur_x, cur_y, tx, ty, self._move_obstacles(), is_node)
+        if r["denied"]:
+            note = (f"the move you wanted would land {r['displacement']:.0f} units off because "
+                    f"({tx:.0f},{ty:.0f}) is taken -- decide again.")
+            self._set_position(cur_x, cur_y, note)     # position unchanged; inform + decide again
+            self._record_action("move", False, decision_tokens, 1, 1)
+            self._log(f"move DENIED (deny-threshold) -> {label}: would displace {r['displacement']:.0f}")
+            return
+
+        land_x, land_y = r["land_x"], r["land_y"]
+        dist = geometry.distance(cur_x, cur_y, land_x, land_y)   # ACTUAL distance traveled
+
+        applied, cost = self._charge_move(dist)
+        if not applied:
+            self._record_action("move", False, decision_tokens, 1, 1)
+            self._log(f"move DENIED -> {label}: cannot afford cost {cost} for dist {dist:.1f}")
+            return
+
+        note = ""
+        if r["displaced"]:
+            note = (f"you intended to reach ({tx:.0f},{ty:.0f}) but it was occupied, so you "
+                    f"stopped at ({land_x:.0f},{land_y:.0f}).")
+        self._set_position(land_x, land_y, note)
+        self._record_action("move", True, decision_tokens, 1, 1)
+        self._log(f"move -> {label} land=({land_x:.0f},{land_y:.0f}) dist={dist:.1f} "
+                  f"cost={cost}{' [displaced]' if r['displaced'] else ''} OK")
+
     def _credit_consumption(self, action_type, target=None):
         """Tick step 3 (free consumption): credit the eat/drink/rest yield,
         capped at MAX_ENERGY server-side. Rest uses the shelter variant when the
@@ -243,7 +370,16 @@ class Agent:
         sheltered = False
         if action_type in ("rest", "sleep"):
             try:
-                sheltered = self._get_model().get("shelter_status", "none") != "none"
+                # SPATIAL CLEANUP: the shelter rest bonus is POSITIONAL -- it applies ONLY
+                # when the owner is AT its own shelter point (exact presence). No shelter, or
+                # resting anywhere else -> normal rest yield (no location-agnostic bonus).
+                m = self._get_model()
+                if m.get("shelter_status", "none") != "none":
+                    sx, sy = m.get("shelter_x"), m.get("shelter_y")
+                    if sx is not None and sy is not None:
+                        ax = float(m.get("pos_x", 0.0) or 0.0)
+                        ay = float(m.get("pos_y", 0.0) or 0.0)
+                        sheltered = movement.at_node(ax, ay, float(sx), float(sy))
             except Exception:
                 sheltered = False
         amount = energy_mod.consumption_yield(action_type, target, sheltered)
@@ -428,6 +564,7 @@ class Agent:
             "build":   self._handle_build,
             "trade":   self._handle_trade,
             "message": self._handle_message,
+            "move":    self._handle_move,
         }
         handler = handlers.get(action_type)
         if handler:
@@ -442,15 +579,9 @@ class Agent:
         node_type = action["target"]
         self._charge(decision_tokens)
         total_tokens = decision_tokens
+        skill_before = get_skill_level(self.model_id, "harvest")
 
-        # COSTED action gate (spec section 3/4): harvest costs COST_HARVEST energy
-        # on top of the inference. If unaffordable it is DENIED with no effect.
-        if not self._charge_costed("harvest"):
-            skill_before = get_skill_level(self.model_id, "harvest")
-            self._record_action("harvest", False, total_tokens, skill_before, skill_before)
-            self._log("harvest DENIED: energy below COST_HARVEST")
-            return
-
+        # Resolve the target node in this sealed group-world (one node per type).
         nodes = requests.get(f"{BASE_URL}/nodes",
                              params={"group": self._group_id()}, timeout=10).json()
         candidates = [
@@ -459,6 +590,7 @@ class Agent:
             and (n.get("is_built", True) or node_type not in BUILDABLE_NODE_TYPES)
         ]
         if not candidates:
+            self._record_action("harvest", False, total_tokens, skill_before, skill_before)
             self._log(f"harvest: no nodes of type {node_type}")
             return
 
@@ -466,7 +598,23 @@ class Agent:
         node = random.choice(with_yield if with_yield else candidates)
         node_id = node["node_id"]
 
-        skill_before = get_skill_level(self.model_id, "harvest")
+        # SPACE pass 3: PRESENCE REQUIREMENT -- must be AT the node to harvest it.
+        # A precondition (checked BEFORE the harvest cost, like affordability): a
+        # not-at-node harvest FAILS, records a failed action, yields NOTHING, and costs
+        # only the inference. No partial credit for being close. The loop is now
+        # move -> (now at node) -> harvest.
+        if not self._at_node(node):
+            self._record_action("harvest", False, total_tokens, skill_before, skill_before)
+            self._log(f"harvest DENIED: not at {node_type} node {node_id}; move there first")
+            return
+
+        # COSTED action gate (spec section 3/4): harvest costs COST_HARVEST energy
+        # on top of the inference. If unaffordable it is DENIED with no effect.
+        if not self._charge_costed("harvest"):
+            self._record_action("harvest", False, total_tokens, skill_before, skill_before)
+            self._log("harvest DENIED: energy below COST_HARVEST")
+            return
+
         failure_rate = calculate_failure_rate(self.model_id, node_type)
 
         # Hunting is a COMPLEX action: run the second-stage execution check.
@@ -698,18 +846,36 @@ class Agent:
     # ------------------------------------------------------------------ build
 
     def _handle_build(self, action, decision_tokens):
+        # DESIGN INVARIANT (space milestone): build is intentionally CURRENT-POSITION-ONLY.
+        # Presence is required to build, and presence is achieved through the MOVEMENT system
+        # in whatever regime is active (teleport-per-tick now, multi-tick later). Do NOT fold
+        # travel into build / do NOT make build target a remote point -- that would let an
+        # agent build-and-teleport in ONE action, breaking the invariant once movement is
+        # multi-tick. Move-then-build is a TWO-TICK sequence by design. See
+        # nyctimene_space_milestone_design.md.
         target = action["target"]
         self._charge(decision_tokens)
         total_tokens = decision_tokens
+        skill_before = get_skill_level(self.model_id, "build")
+
+        # SPACE pass 3: building a WELL is node-located -- must be AT the well node
+        # (precondition, before the build cost). Shelter (basic/improved) is NOT a node
+        # and is not gated on position.
+        if target == "well":
+            nodes = requests.get(f"{BASE_URL}/nodes",
+                                 params={"group": self._group_id()}, timeout=10).json()
+            well = next((n for n in nodes if n["node_type"] == "well"), None)
+            if well is not None and not self._at_node(well):
+                self._record_action("build", False, total_tokens, skill_before, skill_before)
+                self._log("build well DENIED: not at the well node; move there first")
+                return
 
         # COSTED action gate: build costs COST_BUILD energy on top of the inference.
         if not self._charge_costed("build"):
-            skill_before = get_skill_level(self.model_id, "build")
             self._record_action("build", False, total_tokens, skill_before, skill_before)
             self._log("build DENIED: energy below COST_BUILD")
             return
 
-        skill_before = get_skill_level(self.model_id, "build")
         inventory    = self._get_inventory()
 
         if target in ("basic", "improved"):
@@ -756,8 +922,22 @@ class Agent:
             for resource_type, qty in required.items():
                 self._deduct_resource(resource_type, qty)
 
-            requests.post(f"{BASE_URL}/models/{self.model_id}/shelter",
-                          json={"shelter_status": target}, timeout=10).raise_for_status()
+            if target == "basic":
+                # SPATIAL CLEANUP: a shelter is built AT the agent's current position and
+                # CLAIMS that point (a permanent point-claim owned by this agent). Resolves
+                # via graceful displacement -- you build where you stand, and your standing
+                # point is yours, so the claim lands there.
+                cx = float(model.get("pos_x", 0.0) or 0.0)
+                cy = float(model.get("pos_y", 0.0) or 0.0)
+                land = movement.resolve_landing(cx, cy, cx, cy, self._move_obstacles(),
+                                                target_is_node=False)
+                requests.post(f"{BASE_URL}/models/{self.model_id}/shelter",
+                              json={"shelter_status": "basic",
+                                    "pos_x": land["land_x"], "pos_y": land["land_y"]},
+                              timeout=10).raise_for_status()
+            else:  # improved: upgrade in place, KEEP the existing claim point
+                requests.post(f"{BASE_URL}/models/{self.model_id}/shelter",
+                              json={"shelter_status": "improved"}, timeout=10).raise_for_status()
             self._post_event("shelter_built", f"built {target} shelter")
             succeeded = True
             self._log(f"build {target} shelter: ok")

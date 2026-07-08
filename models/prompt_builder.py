@@ -7,11 +7,16 @@ from constants import (
     BUILDABLE_NODE_TYPES,
     DAY_LENGTH_MINUTES,
     MAX_ENERGY,
+    MOVE_COST_PER_UNIT,
+    PLANE_HEIGHT,
+    PLANE_WIDTH,
     REASONING_MEMORY_WINDOW,
     SHELTER_BUILD_COSTS,
     VALID_ACTION_TYPES,
 )
 from mechanics import energy as energy_mod
+from mechanics.geometry import distance as _distance      # SPACE pass 2: perception geometry
+from mechanics.movement import move_cost as _move_cost    # SPACE pass 2: SAME cost formula as the move mechanic
 from mechanics.tension import band_for_total, dominant_source, parse_sources
 
 BASE_URL = "http://127.0.0.1:5000"
@@ -40,7 +45,13 @@ def available_actions_lines(energy):
     right now (spec G). Free actions carry no fixed energy cost."""
     lines = ["--- AVAILABLE ACTIONS (energy cost / affordable now) ---"]
     for action in sorted(VALID_ACTION_TYPES):
-        if energy_mod.is_costed(action):
+        if action == "move":
+            # SPACE pass 2: move cost is POSITION-DEPENDENT (distance x rate), not a
+            # fixed number -- the actual per-destination cost is shown per node in the
+            # RESOURCE NODES section below.
+            lines.append(f"  {action:<8} costs energy = distance x {MOVE_COST_PER_UNIT} "
+                         "(depends on destination; see per-node move cost in RESOURCE NODES)")
+        elif energy_mod.is_costed(action):
             cost = energy_mod.action_cost(action)
             affordable = "affordable" if energy >= cost else "TOO LOW"
             lines.append(f"  {action:<8} costs {cost} energy   [{affordable}]")
@@ -69,9 +80,10 @@ def directive_lines():
         '{"action_type": "...", "target": "...", "reasoning": "..."}',
         "",
         "action_type must be one of: harvest, cook, eat, drink, sleep, build, "
-        "craft, trade, message, rest",
+        "craft, trade, message, rest, move",
         "target: the node type name only (e.g. potato, river - never include "
-        "bracketed IDs), resource, or model_id. null if not applicable.",
+        "bracketed IDs), resource, or model_id. For move, the target is the node "
+        "type you want to travel to, or 'x,y' coordinates. null if not applicable.",
     ]
 
 # gen1 reasoning-memory re-baseline: cap on each rendered reasoning string in
@@ -170,6 +182,11 @@ def build_prompt(model_id):
     # Pass 1: energy is the single currency, stored in current_energy.
     energy = int(model.get("current_energy", 0) or 0)
 
+    # SPACE pass 2: the agent's CURRENT position on the plane (pos_x/pos_y). Distances
+    # to nodes are computed from HERE at render time, so they change after each move.
+    agent_x = float(model.get("pos_x", 0.0) or 0.0)
+    agent_y = float(model.get("pos_y", 0.0) or 0.0)
+
     inventory = {k: v for k, v in model.get("inventory", {}).items() if v > 0}
 
     EDIBLE_ITEMS = ("apple", "potato_cooked", "grain_cooked", "meat_cooked", "bread")
@@ -224,6 +241,14 @@ def build_prompt(model_id):
         # energy.
         lines = ["--- YOUR STATUS ---", f"  Model ID:           {model_id}"]
         lines.extend(energy_status_lines(energy))
+        # SPACE pass 2: position is CORE state (like energy/tension) -- shown in every
+        # band and both arms so the agent always knows where it is on the plane.
+        lines.append(f"  Position:           ({agent_x:.1f}, {agent_y:.1f}) "
+                     f"on a {int(PLANE_WIDTH)}x{int(PLANE_HEIGHT)} plane")
+        # SPATIAL CLEANUP: graceful-displacement message from the last move/build, if any.
+        _note = (model.get("spatial_note") or "").strip()
+        if _note:
+            lines.append(f"  Last move:          {_note}")
         lines.extend([
             f"  Shelter:            {model['shelter_status']}",
             f"  Attention:          {model['attention_state']}",
@@ -275,8 +300,16 @@ def build_prompt(model_id):
                 yield_str = "DEPLETED — harvesting here will fail"
             else:
                 yield_str = f"{node['current_yield']} / {node['max_yield_per_day']} yield remaining"
+            # SPACE pass 2: distance + move cost from the agent's CURRENT position to
+            # this node, computed at render time (dynamic -- changes after a move).
+            # Same formula as the pass-1 movement mechanic (imported, not duplicated).
+            nx = float(node.get("pos_x", 0.0) or 0.0)
+            ny = float(node.get("pos_y", 0.0) or 0.0)
+            ndist = _distance(agent_x, agent_y, nx, ny)
+            ncost = _move_cost(ndist)
             lines.append(
                 f"  [{node['node_id']}] {node['node_type']:<10}  {yield_str}"
+                f"   |  distance {ndist:.1f} / move cost {ncost}"
             )
             lines.append(
                 f"               Today: {act['total_attempts']} attempts, "
@@ -357,6 +390,17 @@ def build_prompt(model_id):
     def mechanics_section():
         return [
             "--- HOW THE WORLD WORKS ---",
+            "  SPACE: the world is a 2D plane. Every resource node sits at a fixed "
+            "location and you occupy your own position. A node's action happens AT the "
+            "node: to harvest (or otherwise act on) a node you must be there, so you "
+            "MOVE to it first and then act (move -> harvest). Moving spends energy "
+            "proportional to the straight-line distance from where you are now; the "
+            "distance and move cost to each node are listed in RESOURCE NODES.",
+            "  SHELTER: a shelter is built at your CURRENT position and claims that exact "
+            "point as yours. Moving changes your current position, so to place a shelter at "
+            "a particular spot (e.g. next to a river) you MOVE there first, then build "
+            "(move -> build) -- the same way you move to a node before harvesting. The rest "
+            "bonus applies only while you are AT your own shelter point.",
             "  WATER: harvest a river node to collect water into your inventory, "
             "THEN drink it. Drinking with no water in inventory fails.",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "
@@ -466,6 +510,8 @@ def build_prompt(model_id):
             "--- FOOD MECHANICS ---",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "
             "harvested RAW and must be cooked before eating (harvest -> cook -> eat).",
+            "  You must MOVE to a food node before you can harvest it "
+            "(its distance + move cost are shown in FOOD NODES).",
             "  Eating requires naming the exact food item in your inventory "
             "(e.g. apple, potato_cooked).",
         ]
@@ -475,6 +521,8 @@ def build_prompt(model_id):
             "--- WATER MECHANICS ---",
             "  WATER: harvest a river node to collect water into your inventory, "
             "THEN drink it. Drinking with no water in inventory fails.",
+            "  You must MOVE to a water node before you can harvest water there "
+            "(its distance + move cost are shown in WATER NODES).",
             "  WELLS: wells start unbuilt and yield nothing until someone builds one.",
         ]
 
@@ -487,6 +535,9 @@ def build_prompt(model_id):
             cost_str = ", ".join(f"{qty} {r}" for r, qty in costs.items())
             lines.append(f"  build {tier} shelter requires: {cost_str}")
         lines.append("  improved shelter requires an existing basic shelter first.")
+        lines.append("  A shelter is built at your CURRENT position -- move to the spot you "
+                     "want before building (move -> build); the rest bonus applies only "
+                     "while you are at your own shelter point.")
         held = {r: inventory.get(r, 0)
                 for costs in SHELTER_BUILD_COSTS.values() for r in costs}
         lines.append("  You are holding: "

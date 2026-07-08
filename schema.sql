@@ -35,13 +35,29 @@ CREATE TABLE models (
     -- Run 3 tension system: clamped total plus per-source buckets
     -- (JSON string: {"hunger": x, "thirst": x, "failures": x, "shelter": x, "messages": x}).
     tension             INTEGER     NOT NULL DEFAULT 0,
-    tension_sources     TEXT        NOT NULL DEFAULT '{}'
+    tension_sources     TEXT        NOT NULL DEFAULT '{}',
+    -- SPACE MILESTONE pass 1: position on the 2D plane (floats, DOUBLE PRECISION).
+    -- pos_* is the CURRENT position (updates on a successful move); spawn_* is the
+    -- IMMUTABLE spawn position (recorded once, drives the generation-record
+    -- spawn_location field). DEFAULT 0 keeps legacy inserts valid; create_model
+    -- sets real placed values.
+    pos_x               DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pos_y               DOUBLE PRECISION NOT NULL DEFAULT 0,
+    spawn_x             DOUBLE PRECISION NOT NULL DEFAULT 0,
+    spawn_y             DOUBLE PRECISION NOT NULL DEFAULT 0,
+    -- SPATIAL CLEANUP: positional shelter = a permanent point-claim owned by this model.
+    -- (shelter_x, shelter_y) is the claimed point when shelter_status != 'none'; NULL when
+    -- unsheltered. The claim frees (coords set NULL) when the shelter breaks (maintenance
+    -- lapse). spatial_note carries the last graceful-displacement message to the next prompt.
+    shelter_x           DOUBLE PRECISION,
+    shelter_y           DOUBLE PRECISION,
+    spatial_note        TEXT        NOT NULL DEFAULT ''
 );
 
 CREATE TABLE skills (
     skill_id        INTEGER     PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     model_id        TEXT        NOT NULL REFERENCES models (model_id),
-    action_type     TEXT        NOT NULL CHECK (action_type IN ('harvest', 'cook', 'eat', 'drink', 'sleep', 'build', 'craft', 'trade', 'message', 'rest')),
+    action_type     TEXT        NOT NULL CHECK (action_type IN ('harvest', 'cook', 'eat', 'drink', 'sleep', 'build', 'craft', 'trade', 'message', 'rest', 'move')),
     skill_level     INTEGER     NOT NULL DEFAULT 1,
     last_updated    TIMESTAMP   NOT NULL,
     UNIQUE (model_id, action_type)
@@ -54,7 +70,7 @@ CREATE TABLE actions (
     model_id            TEXT        NOT NULL REFERENCES models (model_id),
     timestamp           TIMESTAMP   NOT NULL,
     day_number          INTEGER     NOT NULL,
-    action_type         TEXT        NOT NULL CHECK (action_type IN ('harvest', 'cook', 'eat', 'drink', 'sleep', 'build', 'craft', 'trade', 'message', 'rest')),
+    action_type         TEXT        NOT NULL CHECK (action_type IN ('harvest', 'cook', 'eat', 'drink', 'sleep', 'build', 'craft', 'trade', 'message', 'rest', 'move')),
     succeeded           BOOLEAN     NOT NULL,
     stamina_cost        REAL        NOT NULL,
     tokens_used         INTEGER     NOT NULL DEFAULT 0,
@@ -143,6 +159,9 @@ CREATE TABLE node_state (
     experiment_group    TEXT        NOT NULL CHECK (experiment_group IN ('tunnel_C1', 'tunnel_C2', 'flat_C1', 'flat_C2')),
     current_yield       INTEGER     NOT NULL,
     max_yield_per_day   INTEGER     NOT NULL,
+    -- SPACE MILESTONE pass 1: fixed node position on the 2D plane (nodes never move).
+    pos_x               DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pos_y               DOUBLE PRECISION NOT NULL DEFAULT 0,
     is_built            BOOLEAN     NOT NULL DEFAULT FALSE,
     built_by            TEXT        REFERENCES models (model_id),
     yield_last_updated  TIMESTAMP   NOT NULL,

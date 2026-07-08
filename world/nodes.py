@@ -1,6 +1,9 @@
+import random
+
 import requests
 
 from constants import BUILDABLE_NODE_TYPES, NODE_MAX_YIELDS
+from world.placement import place_point   # SPACE pass 1: node placement on the plane
 
 BASE_URL = "http://127.0.0.1:5000"
 
@@ -27,10 +30,15 @@ def initialize_nodes():
     created = []
     for group_id in get_all_group_ids():
         for node_type in NODE_TYPE_ORDER:
+            # SPACE pass 1: drop the node at a uniform-random position on the plane
+            # (seeded global RNG -> layout pinned to EXPERIMENT_SEED).
+            px, py = place_point(random)
             body = {
                 "node_type": node_type,
                 "max_yield_per_day": NODE_MAX_YIELDS[node_type],
                 "experiment_group": group_id,
+                "pos_x": px,
+                "pos_y": py,
             }
             if node_type in BUILDABLE_NODE_TYPES:
                 body["initial_yield"] = 0

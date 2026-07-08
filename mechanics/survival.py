@@ -125,6 +125,17 @@ def run_daily_survival(model_id):
         "shelter_maintenance_paid": shelter_paid,
     })
 
+    # SPATIAL CLEANUP: claim lifetime. A shelter that goes UNMAINTAINED (no wood) breaks,
+    # and its territorial point-claim DISSOLVES -- setting shelter_status to 'none' clears
+    # shelter_x/y, freeing the point (self-cleaning map, no ghost territory). Wired to the
+    # existing wood-maintenance signal.
+    if has_shelter and not shelter_paid:
+        try:
+            requests.post(f"{BASE_URL}/models/{model_id}/shelter",
+                          json={"shelter_status": "none"}, timeout=10)
+        except Exception as exc:
+            print(f"[survival] shelter-break/claim-release error ({model_id}): {exc}")
+
     try:
         tension.day_boundary(model_id)
     except Exception as exc:

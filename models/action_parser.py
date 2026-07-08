@@ -111,6 +111,17 @@ def _validate_target(action_type, target):
     if action_type == "harvest":
         return (target in VALID_NODE_TYPES), target
 
+    if action_type == "move":
+        # SPATIAL CLEANUP: target is a NODE TYPE (travel to that node -- stackable for
+        # co-harvest) OR explicit "x,y" coordinates (travel to that point -- subject to
+        # graceful displacement if occupied). Destination resolved at execution.
+        if target in VALID_NODE_TYPES:
+            return True, target
+        m = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$", target or "")
+        if m:
+            return True, f"{m.group(1)},{m.group(2)}"
+        return False, None
+
     if action_type == "cook":
         return (target in COOKABLE), target
 

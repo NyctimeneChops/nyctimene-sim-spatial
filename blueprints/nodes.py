@@ -50,7 +50,7 @@ def get_nodes():
         return error, status
 
     rows = db.session.execute(text("""
-        SELECT node_id, node_type, experiment_group, current_yield, max_yield_per_day, is_built, built_by, yield_last_updated
+        SELECT node_id, node_type, experiment_group, current_yield, max_yield_per_day, pos_x, pos_y, is_built, built_by, yield_last_updated
         FROM node_state
         WHERE experiment_group = :group
         ORDER BY node_id
@@ -76,14 +76,16 @@ def create_node():
     now = datetime.now(timezone.utc)
 
     result = db.session.execute(text("""
-        INSERT INTO node_state (node_type, experiment_group, current_yield, max_yield_per_day, is_built, yield_last_updated)
-        VALUES (:node_type, :experiment_group, :current_yield, :max_yield_per_day, FALSE, :now)
+        INSERT INTO node_state (node_type, experiment_group, current_yield, max_yield_per_day, pos_x, pos_y, is_built, yield_last_updated)
+        VALUES (:node_type, :experiment_group, :current_yield, :max_yield_per_day, :pos_x, :pos_y, FALSE, :now)
         RETURNING node_id
     """), {
         "node_type": data["node_type"],
         "experiment_group": data["experiment_group"],
         "current_yield": initial_yield,
         "max_yield_per_day": max_yield,
+        "pos_x": float(data.get("pos_x", 0.0)),   # SPACE pass 1: fixed node position
+        "pos_y": float(data.get("pos_y", 0.0)),
         "now": now,
     })
     node_id = result.scalar()

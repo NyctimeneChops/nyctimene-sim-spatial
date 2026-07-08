@@ -1,3 +1,4 @@
+import random
 import threading
 import time
 
@@ -8,6 +9,7 @@ from constants import DAY_LENGTH_MINUTES
 from groups.group_config import get_all_group_ids, get_group_config
 from models.agent import Agent
 from world.environment import initialize_world
+from world.placement import place_point   # SPACE pass 1: agent spawn placement
 
 BASE_URL = "http://127.0.0.1:5000"
 
@@ -33,11 +35,16 @@ def initialize_experiment():
 
         for i in range(1, config["model_count"] + 1):
             model_id = f"{group_id}_{i:02d}"
+            # SPACE pass 1: uniform-random spawn position (seeded RNG). Stored as both
+            # the current position and the immutable spawn position (server-side).
+            px, py = place_point(random)
             resp = requests.post(f"{BASE_URL}/models", json={
                 "model_id":         model_id,
                 "experiment_group": group_id,
                 "run":              config["run"],
                 "wallet":    config["starting_wallet"],
+                "pos_x":     px,
+                "pos_y":     py,
             }, timeout=10)
             resp.raise_for_status()
             total += 1

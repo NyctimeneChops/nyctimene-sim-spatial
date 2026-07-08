@@ -12,6 +12,7 @@ VALID_EXPERIMENT_GROUPS = ("tunnel_C1", "tunnel_C2", "flat_C1", "flat_C2")
 VALID_ACTION_TYPES = {
     "harvest", "cook", "eat", "drink", "sleep",
     "build", "craft", "trade", "message", "rest",
+    "move",   # space milestone pass 1: teleport-per-tick move (Euclidean energy cost)
 }
 
 VALID_MESSAGE_TYPES = {"direct", "broadcast", "group"}
@@ -326,6 +327,70 @@ YIELD_REST_SHELTER = 4000   # rest / sleep in shelter (shelter doubles rest)
 
 # Physical units a solo harvest adds to inventory on success.
 HARVEST_SOLO_UNITS = 2
+
+# ============================================================================
+# SPACE MILESTONE - PASS 1: coordinate system + teleport-per-tick movement
+# ----------------------------------------------------------------------------
+# nyctimene_space_milestone_design.md sections 1-2. Net-new surface on top of the
+# intact v1 economy; NONE of the economy numbers above change.
+#
+# COORDINATE SPACE (documented decision): a continuous 2D plane of fixed size,
+# PLANE_WIDTH x PLANE_HEIGHT, coordinates stored as floats (DOUBLE PRECISION in
+# schema). Floats (not ints) because the plane is continuous and Euclidean
+# distance is inherently real-valued; a grid would be an unnecessary constraint.
+# Each experiment group is a SEALED sub-world (as in the economy: 9 nodes + 8
+# agents per group), so every group is laid out on its OWN copy of this plane and
+# distances/moves are always WITHIN a group. 1000 x 1000 gives room to spread
+# 8 agents + 9 nodes per group without crowding and makes trip distances span
+# 0 .. ~1414 (the diagonal), a useful dynamic range against the energy economy.
+PLANE_WIDTH  = 1000.0
+PLANE_HEIGHT = 1000.0
+
+# Movement energy cost per unit of Euclidean distance (calibration knob; spec
+# section 10 leaves the exact rate open). Scaling rationale against the v1 economy
+# (MAX_ENERGY=30000, BASAL_INCOME=500/tick, COST_HARVEST=1200):
+#   - short hop ~100 units  -> ~300 energy   (cheap, < a harvest)
+#   - medium trip ~400 units -> ~1200 energy (== one COST_HARVEST)
+#   - cross-plane ~1000     -> ~3000 energy  (~10% of MAX_ENERGY)
+#   - max diagonal ~1414    -> ~4242 energy  (~14% of MAX_ENERGY)
+# So a single trip is survivable (not instantly fatal), but an agent that keeps
+# taking long trips nets negative (a 400-unit move costs 1200 vs +500 basal),
+# creating pressure to settle near the resources it uses -- the intended spatial
+# signal -- without the "instant death" failure mode (spec section 5 calibration).
+MOVE_COST_PER_UNIT = 3
+
+# --- SPACE MILESTONE pass 3: presence + exact-point occupancy enforcement ----
+# "AT the node" definition (documented): an agent is AT a node if it is within
+# AT_NODE_EPSILON of the node's (x,y). Nodes are SINGLE POINTS (no node radius -- we
+# deliberately never build one). Teleport-per-tick lands a mover EXACTLY on the
+# node's point, so this is effectively exact-coordinate presence; the tiny epsilon
+# only absorbs float round-trip drift (DB DOUBLE PRECISION <-> Python float). The same
+# epsilon defines "same point" for agent-vs-agent occupancy.
+AT_NODE_EPSILON = 1e-6
+
+# COLLISION MODEL (pass-3 CORRECTION): the earlier PERSONAL_RADIUS proximity rule was
+# REMOVED -- a radius bubble wrongly let an agent near one node wall off moves to a
+# DIFFERENT nearby node (accidental proximity-territoriality that worsens as node density
+# scales). Collision is now EXACT-POINT OCCUPANCY only (mechanics/movement.destination_
+# occupied): a move is denied only if a NON-node destination is already occupied by another
+# agent in the same group; NODE destinations are never blocked (co-harvest stacking). No
+# radius, no proximity, no "pass-through" (teleport has no transit). There is intentionally
+# no PERSONAL_RADIUS constant anymore.
+
+# --- SPATIAL FOUNDATION CLEANUP: graceful displacement + positional shelter ---
+# GRACEFUL DISPLACEMENT replaces "deny the move/build" for an occupied NON-node target:
+# the action lands at the nearest free point IN THE DIRECTION OF INTENT (step back from the
+# target toward the actor past the occupied point). DISPLACEMENT_STEP is the back-off
+# granularity in plane units; small so the landing is close to the intended point. (Node
+# targets are exempt -- always stackable for co-harvest.)
+DISPLACEMENT_STEP = 1.0
+
+# DEFERRED DENY HOOK (dormant): if the displacement between the intended target and the
+# actual landing point EXCEEDS this threshold, the action is DENIED for the tick instead of
+# gracefully displaced (the agent is told to decide again). Default = infinite = never fires;
+# on today's empty plane displacement is ~0. Later (crowded maps / shelter radii) this becomes
+# a one-knob tuning change, not a re-architecture.
+DISPLACEMENT_DENY_THRESHOLD = float("inf")
 
 # Ticks of one in-world day, derived from the day length and per-agent action
 # tempo (a "tick" is one agent action cycle, padded to ACTION_INTERVAL_SECONDS).

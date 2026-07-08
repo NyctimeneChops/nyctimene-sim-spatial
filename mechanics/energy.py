@@ -113,17 +113,19 @@ def apply_costed_debit(energy, action_type):
 # --- one-tick resolver (used by the deterministic ledger test) --------------
 
 def resolve_tick(energy, action_type, tokens, target=None,
-                 sheltered=False, precondition_ok=True):
+                 sheltered=False, precondition_ok=True, move_distance=None):
     """Run one full tick of the ledger in the fixed order and report what
     happened. Pure: the caller supplies the inference `tokens` (stubbed in tests,
     real per-inference in the live loop) and whether a free action's precondition
-    (holding the item / valid target) is met.
+    (holding the item / valid target) is met. For a `move` action the caller also
+    supplies `move_distance` (euclidean distance current->destination); its cost is
+    variable (distance-based) rather than a fixed COSTED_ACTION_COSTS entry.
 
     Returns a dict:
       energy         - balance after the tick
       before_action  - balance after basal + inference, before the action
-      outcome        - one of: costed_applied, costed_denied,
-                       free_applied, free_precondition_failed
+      outcome        - one of: costed_applied, costed_denied, move_applied,
+                       move_denied, free_applied, free_precondition_failed
       applied        - True if the action took effect
       soft_locked    - is_soft_locked(energy) after the tick
     """
@@ -131,7 +133,15 @@ def resolve_tick(energy, action_type, tokens, target=None,
     e = debit_inference(e, tokens)
     before_action = e
 
-    if is_costed(action_type):
+    if action_type == "move":
+        # Variable (distance-based) costed action: teleport-per-tick move.
+        from mechanics.movement import move_cost
+        cost = move_cost(move_distance if move_distance is not None else 0.0)
+        if e >= cost:
+            e, applied, outcome = e - cost, True, "move_applied"
+        else:
+            applied, outcome = False, "move_denied"
+    elif is_costed(action_type):
         e, applied = apply_costed_debit(e, action_type)
         outcome = "costed_applied" if applied else "costed_denied"
     else:
