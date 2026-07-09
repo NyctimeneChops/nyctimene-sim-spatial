@@ -13,6 +13,37 @@ from groups.group_runner import initialize_experiment, run_experiment, stop_expe
 BASE_URL = "http://127.0.0.1:5000"
 
 
+# ---------------------------------------------------- completion sentinel (FIX #1)
+# Idle-billing teardown gap (descaffold/gen2/gen3/gen1_space, 4x): a finished world
+# run kept billing because the Layer-C harvest trigger watches for a RUN_COMPLETE
+# sentinel FILE that main.py never wrote. main.py exits with SIGABRT during the
+# torch/CUDA atexit teardown that runs AFTER the final banner -- which would skip
+# any atexit/finally/end-of-main hook. So the sentinel is written HERE, the instant
+# the run ends and BEFORE any teardown, and fsync'd so it is durably on disk before
+# the abort can happen. Path is the run's own deploy dir (/root/nyctimene*/, e.g.
+# /root/nyctimene_space), which harvest_trigger.DEFAULT_SENTINELS globs.
+
+def _write_run_complete_sentinel(reason="run-ended"):
+    """Synchronously (fsync) write RUN_COMPLETE next to this script, before any
+    model/GPU teardown. Best-effort: never raise, so sentinel I/O cannot disturb
+    the completion path -- the harvest_trigger DB-quiescence backstop (FIX #2)
+    covers a failed write."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RUN_COMPLETE")
+    seed = os.environ.get("EXPERIMENT_SEED", "")
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    body = f"RUN_COMPLETE\nreason={reason}\nseed={seed}\nutc={stamp}\n"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            os.write(fd, body.encode())
+            os.fsync(fd)          # durable on disk BEFORE any teardown/SIGABRT
+        finally:
+            os.close(fd)
+        print(f"[completion] RUN_COMPLETE sentinel written -> {path}", flush=True)
+    except Exception as exc:
+        print(f"[completion] WARN could not write RUN_COMPLETE sentinel: {exc}", flush=True)
+
+
 # ------------------------------------------------ decision_log logging invariant
 # (LOCKED 2026-06-29, decisions/c8_food_acquisition_and_logging_invariant.md)
 # Runs 1-3 are permanently untrainable because decision_log was never written and
@@ -163,6 +194,11 @@ def _print_completion_summary(start_time):
     print("=" * 50)
     print("EXPERIMENT COMPLETE")
     print(f"  Wall-clock runtime: {elapsed // 3600}h {(elapsed % 3600) // 60}m {elapsed % 60}s")
+
+    # FIX #1: write the completion sentinel IMMEDIATELY after the banner and
+    # BEFORE the status/action network calls below and any process-exit teardown,
+    # so a SIGABRT during CUDA teardown can never skip it. Synchronous + fsync'd.
+    _write_run_complete_sentinel()
 
     status = _fetch_status()
     if status:
