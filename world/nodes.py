@@ -9,19 +9,20 @@ BASE_URL = "http://127.0.0.1:5000"
 
 # Every experiment group gets exactly one node of each type, created in this
 # exact order. models/action_parser._node_id_hint resolves bare node ids by
-# assuming this 9-type cycle, so the order must not change.
+# assuming this 8-type cycle, so the order must not change. Wells are NOT seeded
+# (they are agent-placed); a well exists only once an agent builds one.
 NODE_TYPE_ORDER = [
     "apple", "potato", "grain", "hunting", "river",
-    "well", "forest", "rock", "ore",
+    "forest", "rock", "ore",
 ]
 
 
 def initialize_nodes():
     """
-    Create one sealed world per experiment group: 9 nodes per group
-    (one of each type), 36 nodes total across the 4 Run 4 groups.
+    Create one sealed world per experiment group: 8 nodes per group
+    (one of each type), 32 nodes total across the 4 Run 4 groups.
 
-    Creation order is deterministic: all 9 nodes for the first group
+    Creation order is deterministic: all 8 nodes for the first group
     (in NODE_TYPE_ORDER), then the next, in get_all_group_ids() order
     (tunnel_C1, tunnel_C2, flat_C1, flat_C2).
     """

@@ -10,14 +10,16 @@ logger = logging.getLogger(__name__)
 
 VALID_NODE_TYPES = frozenset(UNITS_PER_HARVEST.keys())
 
-# Nodes are created in a deterministic per-group cycle (see
-# world/nodes.py NODE_TYPE_ORDER): 9 nodes per group, one of each type,
-# across the 4 Run 4 groups (tunnel_C1, tunnel_C2, flat_C1, flat_C2 — 36 nodes
-# total), so the node type repeats every 9 ids regardless of group count.
-# The modulo-9 below is intentionally independent of the group count.
+# Seeded nodes are created in a deterministic per-group cycle (see
+# world/nodes.py NODE_TYPE_ORDER): 8 nodes per group, one of each type,
+# across the 4 Run 4 groups (tunnel_C1, tunnel_C2, flat_C1, flat_C2, 32 nodes
+# total), so the node type repeats every 8 ids regardless of group count.
+# The modulo-8 below is intentionally independent of the group count. Wells are
+# NOT seeded (agent-placed) so they are not in this cycle; built wells are
+# addressed by name, and this is only a fallback for bare bracketed ids.
 _NODE_TYPE_BY_OFFSET = {
-    1: "apple", 2: "potato", 3: "grain", 4: "hunting", 5: "river",
-    6: "well", 7: "forest", 8: "rock", 9: "ore",
+    1: "apple", 2: "potato", 3: "grain", 4: "hunting",
+    5: "river", 6: "forest", 7: "rock", 8: "ore",
 }
 
 
@@ -30,7 +32,7 @@ def _node_id_hint(digits):
         return None
     if node_id < 1:
         return None
-    return _NODE_TYPE_BY_OFFSET[((node_id - 1) % 9) + 1]
+    return _NODE_TYPE_BY_OFFSET[((node_id - 1) % 8) + 1]
 COOKABLE         = frozenset({"potato_raw", "grain_raw", "meat_raw"})
 EATABLE          = frozenset({"apple", "potato_cooked", "grain_cooked", "meat_cooked", "bread"})
 BUILDABLE        = frozenset({"basic", "improved", "well"})

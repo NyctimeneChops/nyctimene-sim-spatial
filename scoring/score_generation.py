@@ -33,7 +33,7 @@ TILT = 0.15   # soft efficiency tilt magnitude
 # spawn variance is signal we WANT (a difficulty spread -> an outcome spread = the fitness
 # diversity the loop feeds on). GOAL = prevent spawn-luck DOMINANCE, not achieve neutrality.
 FOOD_NODES  = {"apple", "potato", "grain", "hunting"}
-WATER_NODES = {"river", "well"}
+WATER_NODES = {"river"}
 MOVE_COST_PER_UNIT = 3   # mirrors the sim's constants.MOVE_COST_PER_UNIT (spatial move cost)
 # Correction STRENGTH (named + tunable). 0.15 matches the efficiency-tilt magnitude: the
 # worst spawn in a pool is scaled up to x1.15, the best down to x0.85 (max swing ~1.35x).
@@ -111,7 +111,10 @@ def spawn_circumstance(spawn, group_nodes):
     """SPACE pass 4 SPAWN OPPORTUNITY. From an agent's spawn [x,y] and its SEALED group's
     node layout [(type,x,y)], measure how favorable the spawn was (within the group only):
       d_food  = distance from spawn to the NEAREST food node (apple/potato/grain/hunting)
-      d_water = distance from spawn to the NEAREST water node (river/well)
+      d_water = distance from spawn to the NEAREST water node (river). Wells do not
+                exist at spawn (they are agent-placed), so spawn-water distance is to
+                rivers only; crediting a later-built well would reward water that was
+                not there at spawn.
       spawn_cost = round(d_food*MOVE_COST_PER_UNIT) + round(d_water*MOVE_COST_PER_UNIT)
                    = the ENERGY to travel from spawn to the nearest food AND nearest water
       spawn_opportunity = 1 / (1 + spawn_cost)   (HIGHER = better spawn = LOWER cost-to-reach)

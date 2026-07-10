@@ -9,7 +9,7 @@ from constants import (
     ACTION_INTERVAL_SECONDS, BASAL_INCOME, BREAD_CRAFT_RECIPE, BUILDABLE_NODE_TYPES,
     COOK_MAP, HARVEST_RESOURCE_MAP, HARVEST_SOLO_UNITS, INACTIVITY_THRESHOLD_TICKS,
     INFERENCE_MODEL_NAME, policy_source_for_group,
-    NODE_BASE_FAILURE_RATES, SHELTER_BUILD_COSTS, SLEEP_DURATION_SECONDS,
+    NODE_BASE_FAILURE_RATES, NODE_MAX_YIELDS, SHELTER_BUILD_COSTS, SLEEP_DURATION_SECONDS,
     TOOL_CRAFT_RECIPES, TOOL_NAMES, WELL_BUILD_COST,
 )
 from mechanics import energy as energy_mod
@@ -278,17 +278,22 @@ class Agent:
                 obstacles.append((float(sx), float(sy)))   # other-owned shelter point
         return obstacles
 
-    def _resolve_move_target(self, target):
+    def _resolve_move_target(self, target, cur_x, cur_y):
         """Resolve a move target to (x, y, is_node, label). Target is EITHER a node type
-        (-> that node's point in this group, is_node=True, exempt from displacement) OR
-        'x,y' coordinates (-> that exact point, is_node=False, subject to displacement)."""
+        (-> the NEAREST node of that type to (cur_x,cur_y) in this group, is_node=True,
+        exempt from displacement) OR 'x,y' coordinates (-> that exact point, is_node=False,
+        subject to displacement). Nearest-by-distance so 'move to well' travels to the
+        closest well once multiple wells exist; unchanged for one-per-type nodes."""
         try:
             nodes = requests.get(f"{BASE_URL}/nodes",
                                  params={"group": self._group_id()}, timeout=10).json()
         except Exception:
             nodes = []
-        node = next((n for n in nodes if n["node_type"] == target), None)
-        if node is not None:
+        candidates = [n for n in nodes if n["node_type"] == target]
+        if candidates:
+            node = min(candidates, key=lambda n: geometry.distance(
+                cur_x, cur_y,
+                float(n.get("pos_x", 0.0) or 0.0), float(n.get("pos_y", 0.0) or 0.0)))
             return (float(node.get("pos_x", 0.0) or 0.0), float(node.get("pos_y", 0.0) or 0.0),
                     True, f"{target}(node)")
         if isinstance(target, str) and "," in target:
@@ -326,7 +331,7 @@ class Agent:
 
         # Resolve the TARGET point: a node (its point, exempt from displacement / stackable)
         # or explicit "x,y" coordinates (subject to graceful displacement).
-        tx, ty, is_node, label = self._resolve_move_target(target)
+        tx, ty, is_node, label = self._resolve_move_target(target, cur_x, cur_y)
         if tx is None:
             self._record_action("move", False, decision_tokens, 1, 1)
             self._log(f"move: could not resolve target '{target}'")
@@ -594,19 +599,21 @@ class Agent:
             self._log(f"harvest: no nodes of type {node_type}")
             return
 
-        with_yield = [n for n in candidates if n["current_yield"] > 0]
-        node = random.choice(with_yield if with_yield else candidates)
-        node_id = node["node_id"]
-
-        # SPACE pass 3: PRESENCE REQUIREMENT -- must be AT the node to harvest it.
-        # A precondition (checked BEFORE the harvest cost, like affordability): a
-        # not-at-node harvest FAILS, records a failed action, yields NOTHING, and costs
-        # only the inference. No partial credit for being close. The loop is now
-        # move -> (now at node) -> harvest.
-        if not self._at_node(node):
+        # SPACE PRESENCE REQUIREMENT -- resolve to the node OF THIS TYPE THE AGENT IS
+        # STANDING ON (at_node). Once multiple wells can exist a type no longer maps to one
+        # node, so we cannot pick a random one and then check presence (it could pick a well
+        # the agent is not on and deny wrongly). Keep only type+built candidates under the
+        # agent; if none, DENY (a precondition, like affordability: fails, yields NOTHING,
+        # costs only the inference). Prefer one with yield remaining. This subsumes the old
+        # separate presence check.
+        here = [n for n in candidates if self._at_node(n)]
+        if not here:
             self._record_action("harvest", False, total_tokens, skill_before, skill_before)
-            self._log(f"harvest DENIED: not at {node_type} node {node_id}; move there first")
+            self._log(f"harvest DENIED: not at {node_type} node; move there first")
             return
+        with_yield = [n for n in here if n["current_yield"] > 0]
+        node = (with_yield or here)[0]
+        node_id = node["node_id"]
 
         # COSTED action gate (spec section 3/4): harvest costs COST_HARVEST energy
         # on top of the inference. If unaffordable it is DENIED with no effect.
@@ -858,16 +865,21 @@ class Agent:
         total_tokens = decision_tokens
         skill_before = get_skill_level(self.model_id, "build")
 
-        # SPACE pass 3: building a WELL is node-located -- must be AT the well node
-        # (precondition, before the build cost). Shelter (basic/improved) is NOT a node
-        # and is not gated on position.
-        if target == "well":
+        # SPACE: no build (well OR shelter) may be placed ON a resource node point -- the
+        # agent must move off a node first. A precondition, before the build cost (a denied
+        # build costs only the inference). Build-only: movement, harvest, and co-harvest
+        # onto node points are unchanged (this does NOT touch _move_obstacles).
+        if target in ("basic", "improved", "well"):
+            model = self._get_model() or {}
+            cx = float(model.get("pos_x", 0.0) or 0.0)
+            cy = float(model.get("pos_y", 0.0) or 0.0)
             nodes = requests.get(f"{BASE_URL}/nodes",
                                  params={"group": self._group_id()}, timeout=10).json()
-            well = next((n for n in nodes if n["node_type"] == "well"), None)
-            if well is not None and not self._at_node(well):
+            node_points = [(float(n.get("pos_x", 0.0) or 0.0), float(n.get("pos_y", 0.0) or 0.0))
+                           for n in nodes]
+            if movement.on_any_node(cx, cy, node_points):
                 self._record_action("build", False, total_tokens, skill_before, skill_before)
-                self._log("build well DENIED: not at the well node; move there first")
+                self._log("build DENIED: cannot build on a resource node; move off it first")
                 return
 
         # COSTED action gate: build costs COST_BUILD energy on top of the inference.
@@ -943,14 +955,6 @@ class Agent:
             self._log(f"build {target} shelter: ok")
 
         else:  # well
-            nodes    = requests.get(f"{BASE_URL}/nodes",
-                                    params={"group": self._group_id()}, timeout=10).json()
-            unbuilt  = [n for n in nodes if n["node_type"] == "well" and not n.get("is_built")]
-            if not unbuilt:
-                self._log("build well: no unbuilt well nodes available")
-                self._record_action("build", False, total_tokens, skill_before, skill_before)
-                return
-
             if any(inventory.get(r, 0) < qty for r, qty in required.items()):
                 self._log("build well: insufficient materials")
                 self._record_action("build", False, total_tokens, skill_before, skill_before)
@@ -959,12 +963,27 @@ class Agent:
             for resource_type, qty in required.items():
                 self._deduct_resource(resource_type, qty)
 
-            node_id = unbuilt[0]["node_id"]
-            requests.post(f"{BASE_URL}/nodes/{node_id}/build",
-                          json={"model_id": self.model_id}, timeout=10).raise_for_status()
-            self._post_event("well_built", f"built well node {node_id}")
+            # SPACE: a well is agent-placed infrastructure. Create a NEW well node at the
+            # agent's CURRENT position, already built and at full yield, harvestable by
+            # anyone, no cap. (The old find-an-unbuilt-well + POST /nodes/<id>/build path is
+            # gone: no well is pre-seeded now.)
+            model = self._get_model() or {}
+            cx = float(model.get("pos_x", 0.0) or 0.0)
+            cy = float(model.get("pos_y", 0.0) or 0.0)
+            resp = requests.post(f"{BASE_URL}/nodes", json={
+                "node_type": "well",
+                "experiment_group": self._group_id(),
+                "max_yield_per_day": NODE_MAX_YIELDS["well"],
+                "initial_yield": NODE_MAX_YIELDS["well"],
+                "pos_x": cx, "pos_y": cy,
+                "is_built": True,
+                "built_by": self.model_id,
+            }, timeout=10)
+            resp.raise_for_status()
+            new_id = resp.json().get("node_id")
+            self._post_event("well_built", f"built well node {new_id} at ({cx:.0f},{cy:.0f})")
             succeeded = True
-            self._log(f"build well @ node {node_id}: ok")
+            self._log(f"build well @ ({cx:.0f},{cy:.0f}) node {new_id}: ok")
 
         skill_after = self._increment_skill("build", skill_before)
         self._record_action("build", succeeded, total_tokens, skill_before, skill_after)

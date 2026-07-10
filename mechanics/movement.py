@@ -24,6 +24,13 @@ def at_node(ax, ay, nx, ny):
     return distance(ax, ay, nx, ny) <= AT_NODE_EPSILON
 
 
+def on_any_node(x, y, node_points):
+    """True if (x,y) coincides (within AT_NODE_EPSILON) with any node point. Builds are
+    barred from node points; harvest/movement presence is unaffected (agents may still
+    stand on a node to harvest and co-harvest)."""
+    return any(at_node(x, y, nx, ny) for (nx, ny) in node_points)
+
+
 def destination_occupied(dest_x, dest_y, others, dest_is_node):
     """SPACE pass-3 (CORRECTED collision model): exact-point occupancy check for a MOVE.
 

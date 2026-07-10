@@ -404,15 +404,16 @@ def build_prompt(model_id):
 
     def wells_note():
         # Single source for the WELLS note, rendered from WELL_BUILD_COST so the CALM
-        # rules block and the thirst WATER MECHANICS exit cannot drift. Facts only (how
-        # to build, cost, the presence requirement, reliability vs a river); no advice.
+        # rules block and the thirst WATER MECHANICS exit cannot drift. Facts only (there
+        # are no wells until built, how to build, cost, no-build-on-node, reliability vs a
+        # river, anyone can harvest); no advice.
         cost_str = ", ".join(f"{qty} {r}" for r, qty in WELL_BUILD_COST.items())
         return (
-            "  WELLS: a well starts unbuilt and yields nothing until it is built. To "
-            "build one, move to the well node (a well is built where you stand, the same "
-            "way you move to a node before harvesting) and use build with target 'well'; "
-            f"it costs {cost_str}. Once built, a well yields water and fails less often "
-            "than a river."
+            "  WELLS: there are no wells until an agent builds one. A well is built where "
+            "you stand, so to place one you move to the spot first, then use build with "
+            f"target 'well'; it costs {cost_str}. You cannot build on a resource node, so "
+            "stand clear of nodes first. Once built, a well yields water, fails less often "
+            "than a river, and anyone can harvest it."
         )
 
     def mechanics_section():
@@ -427,8 +428,9 @@ def build_prompt(model_id):
             "  SHELTER: a shelter is built at your CURRENT position and claims that exact "
             "point as yours. Moving changes your current position, so to place a shelter at "
             "a particular spot (e.g. next to a river) you MOVE there first, then build "
-            "(move -> build) -- the same way you move to a node before harvesting. The rest "
-            "bonus applies only while you are AT your own shelter point.",
+            "(move -> build) -- the same way you move to a node before harvesting. You "
+            "cannot build a shelter on a resource node, so pick a spot clear of nodes. The "
+            "rest bonus applies only while you are AT your own shelter point.",
             "  WATER: harvest a river node to collect water into your inventory, "
             "THEN drink it. Drinking with no water in inventory fails.",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "

@@ -105,16 +105,18 @@ check("  ...position PERSISTED across ticks (build read the fresh moved-to posit
 check("  ...nothing blocked build-after-move (no cooldown / stale-state guard)",
       w["actions"][-1]["action_type"] == "build" and w["actions"][-1]["succeeded"] is True)
 
-# ---- 'travel to a good spot (a river), then claim it' ----------------------
+# ---- no-build-on-node: standing ON a resource node, a shelter build is DENIED ----
 w = fresh()
 a = AG.Agent("flat_C1_01", "flat_C1")
-a._handle_move({"action_type": "move", "target": "river"}, 500)     # tick 1: move to the river node
+a._handle_move({"action_type": "move", "target": "river"}, 500)     # tick 1: move onto the river node
 moved = (w["models"]["flat_C1_01"]["pos_x"], w["models"]["flat_C1_01"]["pos_y"])
-a._handle_build({"action_type": "build", "target": "basic"}, 300)   # tick 2: build there
+a._handle_build({"action_type": "build", "target": "basic"}, 300)   # tick 2: build on the node -> DENIED
 shelter = (w["models"]["flat_C1_01"]["shelter_x"], w["models"]["flat_C1_01"]["shelter_y"])
-check("move to a NODE (river@700,100) then build -> shelter claimed AT the river (700,100)",
-      moved == (700.0, 100.0) and shelter == (700.0, 100.0),
-      f"moved {moved}, shelter {shelter}")
+last = w["actions"][-1]
+check("on a resource node (river@700,100), build shelter is DENIED (no claim, failed build)",
+      moved == (700.0, 100.0) and shelter == (None, None)
+      and last["action_type"] == "build" and last["succeeded"] is False,
+      f"moved {moved}, shelter {shelter}, last {last['action_type']}/{last['succeeded']}")
 
 # ---- control: build WITHOUT moving claims the start point (proves it's 'here') ----
 w = fresh()
