@@ -21,6 +21,7 @@ Sections:
   [G] positional shelter = territory (build claims CURRENT point; positional rest bonus)
   [H] spatial prompt renders DYNAMICALLY (position + per-node distance change after a move)
   [I] dump has spatial columns populated + scorer produces circumstance (spawn_opportunity)
+  [J] well lifecycle (agent builds a well node -> harvestable) + no-build-on-node, live DB
 Token-cost measurement + calibration check are printed at the end.
 """
 import os, sys, time, json, math, re, subprocess, requests
@@ -353,16 +354,21 @@ try:
     ck("prompt was built + logged every decision tick during the live loop", len(dl) > 0,
        f"{len(dl)} recent decision rows for {GROUP}_01")
     # Render the SAME agent at two positions: the per-node distance must track position.
-    p_here = build_prompt(f"{GROUP}_01")             # currently AT the apple node (dist ~0)
+    # Render just OFF the apple node (a node UNDER the agent now shows the arrival note,
+    # not a distance -- see the arrival-perception change), so the apple line still carries
+    # a small distance that must then grow after moving away.
+    near = (apple_pt[0] + 0.5, apple_pt[1])
+    requests.post(f"{BASE}/models/{GROUP}_01/position", json={"pos_x": near[0], "pos_y": near[1], "note": ""}, timeout=10)
+    p_here = build_prompt(f"{GROUP}_01")             # ~0.5 off the apple node -> small distance
     requests.post(f"{BASE}/models/{GROUP}_01/position", json={"pos_x": 0.0, "pos_y": 0.0, "note": ""}, timeout=10)
     p_far = build_prompt(f"{GROUP}_01")              # moved to (0,0): apple now far
     d_here, d_far = apple_dist(p_here), apple_dist(p_far)
     far_expected = math.hypot(apple_pt[0], apple_pt[1])
     ck("prompt shows a live Position line that reflects the agent's current point",
        pos_of(p_here) is not None and pos_of(p_far) == (0.0, 0.0))
-    ck("per-node distance is DYNAMIC: re-renders with position (at-node ~0 -> far after moving away)",
+    ck("per-node distance is DYNAMIC: re-renders with position (near-node small -> far after moving away)",
        d_here is not None and d_far is not None and d_here <= 1.0 and abs(d_far - far_expected) < 1.0,
-       f"apple distance {d_here:.1f} (at node) -> {d_far:.1f} (from origin, expected {far_expected:.1f})")
+       f"apple distance {d_here} (near node) -> {d_far} (from origin, expected {far_expected:.1f})")
 
     # =========================================================== TOKEN-COST MEASUREMENT
     print("\n" + "=" * 74)
@@ -507,6 +513,128 @@ try:
     ck("every scored flat agent has a computed spawn_opportunity",
        len(have_opp) == len(flat_agents), f"{len(have_opp)}/{len(flat_agents)}")
     os.remove(DUMP)
+
+    # =========================================================== [J] WELL LIFECYCLE
+    # Agent-placed wells + no-build-on-node against the LIVE DB. LAST section so it
+    # cannot perturb earlier counts. Reuses an existing flat_C1 traveler (no new model
+    # row); drives the REAL handlers directly in the deterministic post-loop phase.
+    print("\n[J] WELL LIFECYCLE (agent-placed + no-build-on-node, live DB)")
+    from constants import NODE_MAX_YIELDS, UNITS_PER_HARVEST, WELL_BUILD_COST
+    WID = f"{GROUP}_02"
+    wa = agents[WID]
+
+    def _wells():
+        return [n for n in _nodes(GROUP) if n["node_type"] == "well"]
+    def _well_by_id(wid):
+        return next((n for n in _nodes(GROUP) if n["node_id"] == wid), {})
+    def _last_build():
+        acts = requests.get(f"{BASE}/actions/{WID}", params={"limit": 999}, timeout=10).json()
+        builds = [a for a in acts if a["action_type"] == "build"]
+        return builds[-1] if builds else {}
+    def _clear_spot(start):
+        pts = [(float(n["pos_x"]), float(n["pos_y"])) for n in _nodes(GROUP)]
+        s = start
+        while any(math.hypot(s[0] - nx, s[1] - ny) <= 1e-6 for (nx, ny) in pts):
+            s = (s[0] + 1.0, s[1] + 1.0)
+        return s
+    def _reset(pt, mats):
+        requests.post(f"{BASE}/models/{WID}/position", json={"pos_x": pt[0], "pos_y": pt[1], "note": ""}, timeout=10)
+        requests.post(f"{BASE}/models/{WID}/energy/adjust", json={"delta": MAX_ENERGY}, timeout=10)
+        for r, q in mats.items():
+            requests.post(f"{BASE}/inventory/{WID}/add", json={"resource_type": r, "quantity": q}, timeout=10)
+
+    # --- clear build spot + reset the reused agent there with materials ---
+    spot = _clear_spot((500.0, 500.0))
+    node_pts = [(float(n["pos_x"]), float(n["pos_y"])) for n in _nodes(GROUP)]
+    ck("[J] chosen build spot is clear of every node point (within 1e-6)",
+       all(math.hypot(spot[0] - nx, spot[1] - ny) > 1e-6 for (nx, ny) in node_pts), f"spot={spot}")
+    _reset(spot, {"stone": WELL_BUILD_COST["stone"] + 2, "wood": WELL_BUILD_COST["wood"] + 2})
+    ck("[J] reused agent has shelter_status 'none'", _model(WID)["shelter_status"] == "none")
+
+    # --- pre-build: no wells are seeded ---
+    ck("[J] pre-build: ZERO well nodes exist (wells are no longer seeded)",
+       len(_wells()) == 0, f"{len(_wells())} wells")
+    n_before = len(_nodes(GROUP))
+    held0 = _held(WID); stone0, wood0 = held0.get("stone", 0), held0.get("wood", 0)
+
+    # --- build the well ---
+    wa._handle_build({"action_type": "build", "target": "well", "reasoning": "det"}, 500)
+    wells = _wells()
+    ck("[J] build well -> exactly ONE more node, and it is a well",
+       len(_nodes(GROUP)) == n_before + 1 and len(wells) == 1,
+       f"nodes {n_before}->{len(_nodes(GROUP))}, wells={len(wells)}")
+    well = wells[0] if wells else {}
+    ck("[J] new well is built + attributed + full yield at the agent's position",
+       well.get("is_built") is True and well.get("built_by") == WID
+       and well.get("current_yield") == NODE_MAX_YIELDS["well"]
+       and well.get("max_yield_per_day") == NODE_MAX_YIELDS["well"]
+       and abs(float(well.get("pos_x", -1)) - spot[0]) < 1e-6
+       and abs(float(well.get("pos_y", -1)) - spot[1]) < 1e-6,
+       f"is_built={well.get('is_built')} by={well.get('built_by')} "
+       f"yield={well.get('current_yield')} pos=({well.get('pos_x')},{well.get('pos_y')})")
+    ck("[J] last build action recorded succeeded True", _last_build().get("succeeded") is True)
+    held1 = _held(WID)
+    ck("[J] held stone/wood each decreased by the WELL_BUILD_COST amounts",
+       held1.get("stone", 0) == stone0 - WELL_BUILD_COST["stone"]
+       and held1.get("wood", 0) == wood0 - WELL_BUILD_COST["wood"],
+       f"stone {stone0}->{held1.get('stone', 0)}, wood {wood0}->{held1.get('wood', 0)}")
+
+    # --- harvest the well it is standing on (2% base fail rate -> retry) ---
+    wid = well["node_id"]
+    water_before = _held(WID).get("water", 0)
+    yield_before = _well_by_id(wid).get("current_yield")
+    harvested = False
+    for _ in range(6):
+        requests.post(f"{BASE}/models/{WID}/energy/adjust", json={"delta": MAX_ENERGY}, timeout=10)
+        wa._handle_harvest({"action_type": "harvest", "target": "well", "reasoning": "det"}, 500)
+        if _well_by_id(wid).get("current_yield", yield_before) < yield_before:
+            harvested = True; break
+    ck("[J] a well harvest succeeded (node yield decremented within the retry budget)", harvested)
+    ck("[J] successful well harvest increased the agent's held water",
+       _held(WID).get("water", 0) > water_before,
+       f"water {water_before}->{_held(WID).get('water', 0)}")
+    ck("[J] well current_yield decreased by UNITS_PER_HARVEST['well'] on the successful harvest",
+       _well_by_id(wid).get("current_yield") == yield_before - UNITS_PER_HARVEST["well"],
+       f"yield {yield_before}->{_well_by_id(wid).get('current_yield')}")
+
+    # --- negative: no build (well OR shelter) on a REAL resource node point ---
+    _reset(_node_pt(GROUP, "river"), {"stone": 20, "wood": 20, "ore": 20})
+    ck("[J] agent on the river node with materials, shelter still 'none'",
+       _model(WID)["shelter_status"] == "none")
+    wcount = len(_wells())
+    wa._handle_build({"action_type": "build", "target": "well", "reasoning": "det"}, 500)
+    ck("[J] build WELL on a resource node is DENIED (well count unchanged, last build failed)",
+       len(_wells()) == wcount and _last_build().get("succeeded") is False,
+       f"wells {wcount}->{len(_wells())}")
+    wa._handle_build({"action_type": "build", "target": "basic", "reasoning": "det"}, 500)
+    sm = _model(WID)
+    ck("[J] build SHELTER on a resource node is DENIED (still 'none', no claim, last build failed)",
+       sm["shelter_status"] == "none" and sm.get("shelter_x") is None and sm.get("shelter_y") is None
+       and _last_build().get("succeeded") is False,
+       f"status={sm['shelter_status']} claim=({sm.get('shelter_x')},{sm.get('shelter_y')})")
+
+    # --- multi-well targeting: harvest resolves to the well UNDER the agent ---
+    spot2 = _clear_spot((spot[0] + 123.0, spot[1] + 45.0))
+    _reset(spot2, {"stone": WELL_BUILD_COST["stone"] + 2, "wood": WELL_BUILD_COST["wood"] + 2})
+    wa._handle_build({"action_type": "build", "target": "well", "reasoning": "det"}, 500)
+    wells2 = _wells()
+    ck("[J] second well built -> two wells now exist", len(wells2) == 2, f"{len(wells2)} wells")
+    wid2 = next((n["node_id"] for n in wells2 if n["node_id"] != wid), None)
+    requests.post(f"{BASE}/models/{WID}/position",
+                  json={"pos_x": spot2[0], "pos_y": spot2[1], "note": ""}, timeout=10)
+    y1_before = _well_by_id(wid).get("current_yield")
+    y2_before = _well_by_id(wid2).get("current_yield")
+    got2 = False
+    for _ in range(6):
+        requests.post(f"{BASE}/models/{WID}/energy/adjust", json={"delta": MAX_ENERGY}, timeout=10)
+        wa._handle_harvest({"action_type": "harvest", "target": "well", "reasoning": "det"}, 500)
+        if _well_by_id(wid2).get("current_yield", y2_before) < y2_before:
+            got2 = True; break
+    ck("[J] multi-well: harvest resolves to the well UNDER the agent (2nd decremented, 1st unchanged)",
+       got2 and _well_by_id(wid2).get("current_yield") == y2_before - UNITS_PER_HARVEST["well"]
+       and _well_by_id(wid).get("current_yield") == y1_before,
+       f"well2 {y2_before}->{_well_by_id(wid2).get('current_yield')}, "
+       f"well1 {y1_before}->{_well_by_id(wid).get('current_yield')}")
 
     print("\n" + "=" * 74)
     print(f"SPATIAL SMOKE RESULT: {sum(results)}/{len(results)} checks passed")
