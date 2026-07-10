@@ -129,7 +129,7 @@ SHELTER_BUILD_COSTS = {
     "improved": {"wood": 5, "stone": 3, "ore": 2},
 }
 
-WELL_BUILD_COST = {"stone": 10, "wood": 5}
+WELL_BUILD_COST = {"stone": 3, "wood": 2}
 
 # grain_cooked required to craft one bread.
 BREAD_CRAFT_RECIPE = {"grain_cooked": 2}

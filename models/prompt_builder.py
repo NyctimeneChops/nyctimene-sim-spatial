@@ -13,10 +13,11 @@ from constants import (
     REASONING_MEMORY_WINDOW,
     SHELTER_BUILD_COSTS,
     VALID_ACTION_TYPES,
+    WELL_BUILD_COST,
 )
 from mechanics import energy as energy_mod
 from mechanics.geometry import distance as _distance      # SPACE pass 2: perception geometry
-from mechanics.movement import move_cost as _move_cost, at_node as _at_node    # SPACE pass 2: SAME cost formula as the move mechanic
+from mechanics.movement import move_cost as _move_cost, at_node as _at_node    # SPACE pass 2: move_cost = SAME formula as the move mechanic; at_node = SAME presence predicate harvest/build enforce
 from mechanics.tension import band_for_total, dominant_source, parse_sources
 
 BASE_URL = "http://127.0.0.1:5000"
@@ -401,6 +402,19 @@ def build_prompt(model_id):
             lines.append("  (no prior decisions yet)")
         return lines
 
+    def wells_note():
+        # Single source for the WELLS note, rendered from WELL_BUILD_COST so the CALM
+        # rules block and the thirst WATER MECHANICS exit cannot drift. Facts only (how
+        # to build, cost, the presence requirement, reliability vs a river); no advice.
+        cost_str = ", ".join(f"{qty} {r}" for r, qty in WELL_BUILD_COST.items())
+        return (
+            "  WELLS: a well starts unbuilt and yields nothing until it is built. To "
+            "build one, move to the well node (a well is built where you stand, the same "
+            "way you move to a node before harvesting) and use build with target 'well'; "
+            f"it costs {cost_str}. Once built, a well yields water and fails less often "
+            "than a river."
+        )
+
     def mechanics_section():
         return [
             "--- HOW THE WORLD WORKS ---",
@@ -419,7 +433,7 @@ def build_prompt(model_id):
             "THEN drink it. Drinking with no water in inventory fails.",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "
             "harvested RAW and must be cooked before eating (harvest -> cook -> eat).",
-            "  WELLS: wells start unbuilt and yield nothing until someone builds one.",
+            wells_note(),
             "  DEPLETED nodes yield nothing until they regenerate at the start of "
             "the next day.",
             "  Eating requires naming the exact food item in your inventory "
@@ -537,7 +551,7 @@ def build_prompt(model_id):
             "THEN drink it. Drinking with no water in inventory fails.",
             "  You must MOVE to a water node before you can harvest water there "
             "(its distance + move cost are shown in WATER NODES).",
-            "  WELLS: wells start unbuilt and yield nothing until someone builds one.",
+            wells_note(),
         ]
 
     def shelter_requirements_section():

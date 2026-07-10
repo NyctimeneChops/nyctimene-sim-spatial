@@ -17,6 +17,9 @@ Verifies (design doc sections 1-2, pass 2 scope):
     to reach this node" (at_node predicate) in place of the distance/move-cost row, and it
     rides the food/water exit (present in both arms exactly when the food/water node is at
     the agent's feet).
+  * well-building is surfaced in the prompt: the WELLS note states how to build a well
+    (build with target 'well', at the well node) and its cost, rendered from
+    WELL_BUILD_COST, in both the CALM rules and the thirst water-mechanics exit.
   * NO enforcement was built (harvest handler still position-agnostic).
 """
 import json
@@ -184,6 +187,28 @@ check("hunger-dominant: apple (food EXIT) line shows the arrival note",
       "you do not need to move or travel to reach this node" in apple_food, apple_food.strip())
 check("thirst-dominant: apple (food, NON-exit) compressed away -> arrival note NOT present",
       "you do not need to move or travel to reach this node" not in p_thirst)
+
+# ---------------------------------------------------- [W] well-building discoverable
+# The well note must state HOW to build a well (target 'well', at the well node) and its
+# cost, with the cost rendered from WELL_BUILD_COST (compute the expected string here from
+# the constant, so the test verifies prompt and constant stay in sync). It appears in the
+# CALM rules and via the thirst WATER MECHANICS exit. Facts only, no recommendation.
+from constants import WELL_BUILD_COST
+well_cost_str = ", ".join(f"{qty} {r}" for r, qty in WELL_BUILD_COST.items())
+print(f"\n[W] well-building surfaced in the prompt (cost from WELL_BUILD_COST = '{well_cost_str}')")
+wells_line = line_with(p, "WELLS:")          # p = CALM render at (100,200)
+print(f"    CALM WELLS line: {wells_line.strip()}")
+check("CALM prompt surfaces build target 'well'", "target 'well'" in p, wells_line.strip())
+check("CALM prompt states the presence/move-to-build requirement",
+      "move to the well node" in p and "built where you stand" in p)
+check("CALM prompt renders the well cost from WELL_BUILD_COST (in sync, not hardcoded)",
+      well_cost_str in wells_line, f"expected cost '{well_cost_str}'")
+check("CALM well note states the reliability fact (fails less often than a river)",
+      "fails less often than a river" in wells_line)
+wells_thirst = line_with(p_thirst, "WELLS:")   # thirst-dominant -> WATER MECHANICS exit
+print(f"    thirst-exit WELLS line: {wells_thirst.strip()}")
+check("thirst WATER-MECHANICS exit surfaces well-building with the same cost",
+      "target 'well'" in wells_thirst and well_cost_str in wells_thirst, wells_thirst.strip())
 
 # ---------------------------------------------------- [D] token cost of spatial
 print("\n[D] token cost the spatial block adds (chars = the project's prompt_length unit)")
