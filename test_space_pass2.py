@@ -13,6 +13,10 @@ Verifies (design doc sections 1-2, pass 2 scope):
   * HOW THE WORLD WORKS states the travel-to-node requirement (factual).
   * the spatial block's compression treatment (position core; per-node distances ride
     the nodes section / food-water exit) + the token cost it adds.
+  * arrival-perception: a node UNDER the agent renders "you do not need to move or travel
+    to reach this node" (at_node predicate) in place of the distance/move-cost row, and it
+    rides the food/water exit (present in both arms exactly when the food/water node is at
+    the agent's feet).
   * NO enforcement was built (harvest handler still position-agnostic).
 """
 import json
@@ -99,7 +103,7 @@ check("agent position shown in status", "Position:           (100.0, 200.0)" in 
 NODE_EXPECT = [("apple", "distance 500.0 / move cost 1500"),
                ("potato", "distance 5.0 / move cost 15"),
                ("river", "distance 500.0 / move cost 1500"),
-               ("rock", "distance 0.0 / move cost 0")]
+               ("rock", "you do not need to move or travel to reach this node")]
 for nt, expect in NODE_EXPECT:
     row = line_with(p, f"] {nt:<10}")
     print(f"    {nt:<7}: {row.strip()}")
@@ -110,11 +114,27 @@ check("'move' is in AVAILABLE ACTIONS with a position-dependent cost",
 check("HOW THE WORLD WORKS states the travel-to-node requirement",
       "MOVE to it first" in p and "SPACE:" in p)
 
+# ---------------------------------------------------- [A2] arrival-perception
+# rock(100,200) sits under the agent(100,200): its line must state arrival (perception),
+# with the distance/move-cost suffix REPLACED (not appended). potato is not at-node.
+print("\n[A2] arrival-perception: node under the agent shows the arrival note, not a distance")
+rock_row = line_with(p, "] rock")
+print(f"    at-node (rock): {rock_row.strip()}")
+check("at-node line shows the arrival note",
+      "you do not need to move or travel to reach this node" in rock_row, rock_row.strip())
+check("at-node line does NOT contain 'distance' (suffix replaced, not appended)",
+      "distance" not in rock_row)
+check("at-node line does NOT contain 'move cost' (suffix replaced, not appended)",
+      "move cost" not in rock_row)
+potato_row = line_with(p, "] potato")
+check("a non-at-node node still shows 'distance ... / move cost ...'",
+      "distance" in potato_row and "move cost" in potato_row, potato_row.strip())
+
 # ---------------------------------------------------- [B] dynamic after a move
 p2 = render("tunnel_C1", 400.0, 600.0, tension=0, sources="{}")   # moved to the apple
 print("\n[B] DYNAMIC: same agent moved to (400, 600), distances recomputed")
 # from (400,600): apple 0/0 ; river dx300 dy100 -> 316.2 cost 949 ; rock 500/1500 ; potato 495/1485
-DYN_EXPECT = [("apple", "distance 0.0 / move cost 0"),
+DYN_EXPECT = [("apple", "you do not need to move or travel to reach this node"),
               ("river", "distance 316.2 / move cost 949"),
               ("rock", "distance 500.0 / move cost 1500"),
               ("potato", "distance 495.0 / move cost 1485")]
@@ -147,6 +167,23 @@ check("hunger-tunnel agent still sees FOOD-node distances via the exit",
 check("flat arm shows full node list with distances at max tension",
       "distance 500.0 / move cost 1500" in p_flat)
 print(f"    tunnel-arm prompt chars: {len(p_tunnel)}   flat-arm prompt chars: {len(p_flat)}")
+
+# ---------------------------------------------------- [C2] arrival note rides the exit
+# agent STANDING ON the apple food node (400,600) at max tension. Under hunger dominance
+# food is the exit -> the apple line renders (with the arrival note). Under thirst
+# dominance food is NOT the exit -> the apple per-node line is compressed away, so the
+# arrival note does not appear. This proves the note rides the exit and never leaks as an
+# always-shown element.
+sources_thirst = json.dumps({"hunger": 0, "thirst": 100, "failures": 0, "shelter": 0, "messages": 0})
+print(f"\n[C2] arrival note rides the food/water exit (agent ON the apple at (400,600), tension=100)")
+p_food_exit = render("tunnel_C1", 400.0, 600.0, tension=100, sources=sources_hunger)  # hunger -> food exit
+p_thirst    = render("tunnel_C1", 400.0, 600.0, tension=100, sources=sources_thirst)  # thirst -> food compressed
+apple_food = line_with(p_food_exit, "] apple")
+print(f"    hunger-dominant apple line: {apple_food.strip()}")
+check("hunger-dominant: apple (food EXIT) line shows the arrival note",
+      "you do not need to move or travel to reach this node" in apple_food, apple_food.strip())
+check("thirst-dominant: apple (food, NON-exit) compressed away -> arrival note NOT present",
+      "you do not need to move or travel to reach this node" not in p_thirst)
 
 # ---------------------------------------------------- [D] token cost of spatial
 print("\n[D] token cost the spatial block adds (chars = the project's prompt_length unit)")

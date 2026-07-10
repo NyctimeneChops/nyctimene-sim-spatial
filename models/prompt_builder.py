@@ -16,7 +16,7 @@ from constants import (
 )
 from mechanics import energy as energy_mod
 from mechanics.geometry import distance as _distance      # SPACE pass 2: perception geometry
-from mechanics.movement import move_cost as _move_cost    # SPACE pass 2: SAME cost formula as the move mechanic
+from mechanics.movement import move_cost as _move_cost, at_node as _at_node    # SPACE pass 2: SAME cost formula as the move mechanic
 from mechanics.tension import band_for_total, dominant_source, parse_sources
 
 BASE_URL = "http://127.0.0.1:5000"
@@ -307,10 +307,24 @@ def build_prompt(model_id):
             ny = float(node.get("pos_y", 0.0) or 0.0)
             ndist = _distance(agent_x, agent_y, nx, ny)
             ncost = _move_cost(ndist)
-            lines.append(
-                f"  [{node['node_id']}] {node['node_type']:<10}  {yield_str}"
-                f"   |  distance {ndist:.1f} / move cost {ncost}"
-            )
+            # Arrival-perception: when the agent is standing on this node, replace
+            # the distance/cost suffix with a plain arrival statement. This fixes
+            # PERCEPTION (the agent knows it has arrived), not DECISION (it is never
+            # told to harvest). It uses at_node for perception/enforcement
+            # consistency (the same predicate harvest enforces), not the rounded
+            # distance string. It lives inside nodes_section on purpose so it rides
+            # the food/water exit under tunnel and therefore appears in both arms
+            # exactly when it is relevant.
+            if _at_node(agent_x, agent_y, nx, ny):
+                lines.append(
+                    f"  [{node['node_id']}] {node['node_type']:<10}  {yield_str}"
+                    f"   |  you do not need to move or travel to reach this node"
+                )
+            else:
+                lines.append(
+                    f"  [{node['node_id']}] {node['node_type']:<10}  {yield_str}"
+                    f"   |  distance {ndist:.1f} / move cost {ncost}"
+                )
             lines.append(
                 f"               Today: {act['total_attempts']} attempts, "
                 f"{act['succeeded']} succeeded, {act['failed']} failed"
