@@ -6,8 +6,12 @@ PART 1 (mechanical): one action per tick, so move-then-build is a TWO-TICK seque
   claimed at the moved-to point, the position persisted across ticks, and nothing blocks
   build-after-move (no stale read, no cooldown/guard).
 
-PART 2 (comprehension): render a prompt and confirm the shelter/build rule now reads the
-  move -> build relationship the way move -> harvest already does; report the added chars.
+PART 1b (ARRIVAL FIX v2): a move whose resolved target is the agent's CURRENT position is a
+  FAILED no-op (position unchanged, no skill XP, spatial_note set); legit travel to a
+  DIFFERENT node still SUCCEEDS; and a build denied on a resource node sets spatial_note.
+
+PART 2 (comprehension): render a prompt and confirm the shelter rule states CONSTRAINTS only
+  (built at CURRENT position, positional rest bonus) with NO move-first procedure.
 """
 import models.agent as AG
 import world.clock as CK
@@ -117,6 +121,10 @@ check("on a resource node (river@700,100), build shelter is DENIED (no claim, fa
       moved == (700.0, 100.0) and shelter == (None, None)
       and last["action_type"] == "build" and last["succeeded"] is False,
       f"moved {moved}, shelter {shelter}, last {last['action_type']}/{last['succeeded']}")
+check("  ...build denial sets spatial_note with the reason (agent sees it next tick)",
+      w["models"]["flat_C1_01"]["spatial_note"]
+      == "FAILED - you cannot build on a resource node. Move off the node first.",
+      w["models"]["flat_C1_01"]["spatial_note"])
 
 # ---- control: build WITHOUT moving claims the start point (proves it's 'here') ----
 w = fresh()
@@ -124,6 +132,43 @@ a = AG.Agent("flat_C1_01", "flat_C1")
 a._handle_build({"action_type": "build", "target": "basic"}, 300)   # no move first
 check("build WITHOUT moving -> shelter claimed at the agent's start point (0,0) ('here')",
       (w["models"]["flat_C1_01"]["shelter_x"], w["models"]["flat_C1_01"]["shelter_y"]) == (0.0, 0.0))
+
+print("\n[PART 1b] ARRIVAL FIX v2: a move to where you ALREADY are is a FAILED no-op")
+
+# ---- legit node travel still SUCCEEDS, then a repeat onto the same node FAILS ----
+w = fresh()
+a = AG.Agent("flat_C1_01", "flat_C1")
+a._handle_move({"action_type": "move", "target": "river"}, 500)     # (0,0) -> river (700,100)
+pos1 = (w["models"]["flat_C1_01"]["pos_x"], w["models"]["flat_C1_01"]["pos_y"])
+first = w["actions"][-1]
+check("move to a DIFFERENT node (river@700,100) still SUCCEEDS (legit travel not broken)",
+      pos1 == (700.0, 100.0) and first["action_type"] == "move" and first["succeeded"] is True,
+      f"pos {pos1}, {first['action_type']}/{first['succeeded']}")
+a._handle_move({"action_type": "move", "target": "river"}, 500)     # already on river -> no-op
+pos2 = (w["models"]["flat_C1_01"]["pos_x"], w["models"]["flat_C1_01"]["pos_y"])
+note = w["models"]["flat_C1_01"]["spatial_note"]
+last = w["actions"][-1]
+check("moving onto the node you already occupy is recorded FAILED (no silent success)",
+      last["action_type"] == "move" and last["succeeded"] is False)
+check("  ...position UNCHANGED (still on river@700,100, no teleport)", pos2 == (700.0, 100.0))
+check("  ...move grants NO skill XP (skill_before == skill_after)",
+      last["skill_level_before"] == last["skill_level_after"])
+check("  ...spatial_note names the node and says no movement occurred",
+      "FAILED" in note and "physically present at the river node" in note
+      and "no movement occurred" in note, note)
+
+# ---- a raw-coordinate move to the agent's CURRENT point also FAILS ----
+w = fresh()
+a = AG.Agent("flat_C1_01", "flat_C1")   # starts at (0,0)
+a._handle_move({"action_type": "move", "target": "0,0"}, 500)       # move to where you already are
+note = w["models"]["flat_C1_01"]["spatial_note"]
+last = w["actions"][-1]
+check("move to the agent's CURRENT coordinate (0,0) is recorded FAILED",
+      last["action_type"] == "move" and last["succeeded"] is False)
+check("  ...position UNCHANGED at (0,0)",
+      (w["models"]["flat_C1_01"]["pos_x"], w["models"]["flat_C1_01"]["pos_y"]) == (0.0, 0.0))
+check("  ...spatial_note uses the raw-point wording ('at that point'), not a node name",
+      "FAILED" in note and "at that point" in note and "no movement occurred" in note, note)
 
 # ---------------------------------------------------- PART 2: prompt legibility
 print("\n[PART 2] prompt legibility (move -> build relationship)")
@@ -160,22 +205,18 @@ print("\n  HOW-THE-WORLD-WORKS shelter rule (rendered):")
 for seg in [shelter_line[i:i+88] for i in range(0, len(shelter_line), 88)]:
     print("   " + seg.strip())
 check("prompt states shelter is built at CURRENT position", "built at your CURRENT position" in prompt)
-check("prompt states the move -> build sequence (parallel to move -> harvest)",
-      "move -> build" in prompt and "move -> harvest" in prompt)
+# ARRIVAL FIX v2: the prompt states CONSTRAINTS/facts only -- it must NOT teach a move-first
+# PROCEDURE. The old 'move -> build' / 'move -> harvest' teaching arrows are gone.
+check("prompt no longer teaches a move-first procedure (no 'move -> build' / 'move -> harvest')",
+      "move -> build" not in prompt and "move -> harvest" not in prompt)
+check("prompt states physical presence as a CONSTRAINT (not an instruction to move)",
+      "You must be physically present at a" in prompt)
 check("prompt states the rest bonus is positional (at your own shelter point)",
       "while you are AT your own shelter point" in prompt)
 # factual, not a command: no imperative 'you should/must build' directive
 lc = shelter_line.lower()
 check("reads as factual mechanics, not an instruction to build",
       "you should build" not in lc and "you must build" not in lc and "build a shelter now" not in lc)
-added = len(shelter_line) + len("  A shelter is built at your CURRENT position -- move to the spot you "
-                                "want before building (move -> build); the rest bonus applies only "
-                                "while you are at your own shelter point.")
-print(f"\n  added shelter text: ~{added} chars (~{added//4} tokens) "
-      f"[{len(shelter_line)} in HOW-THE-WORLD-WORKS (compresses under tunnel) + "
-      f"~{added-len(shelter_line)} in the shelter EXIT block]")
-check("added text is a small addition (does not bloat the prompt)", added < 0.15 * len(prompt),
-      f"{added} chars vs prompt {len(prompt)}")
 
 print("\n" + "=" * 72)
 passed = sum(_checks)

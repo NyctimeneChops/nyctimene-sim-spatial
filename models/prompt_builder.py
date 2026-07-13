@@ -319,7 +319,7 @@ def build_prompt(model_id):
             if _at_node(agent_x, agent_y, nx, ny):
                 lines.append(
                     f"  [{node['node_id']}] {node['node_type']:<10}  {yield_str}"
-                    f"   |  you do not need to move or travel to reach this node"
+                    f"   |  you are physically present at this node"
                 )
             else:
                 lines.append(
@@ -403,34 +403,29 @@ def build_prompt(model_id):
         return lines
 
     def wells_note():
-        # Single source for the WELLS note, rendered from WELL_BUILD_COST so the CALM
-        # rules block and the thirst WATER MECHANICS exit cannot drift. Facts only (there
-        # are no wells until built, how to build, cost, no-build-on-node, reliability vs a
-        # river, anyone can harvest); no advice.
+        # Single source for the WELLS note, rendered from WELL_BUILD_COST so the CALM rules
+        # block and the thirst WATER MECHANICS exit cannot drift. Constraints/facts only (no
+        # wells until built, where/cost, reliability vs a river, anyone can harvest). The
+        # move-first procedure and the no-build-on-node clause are DELETED: the world teaches
+        # the build-on-node denial via spatial_note (see agent._handle_build).
         cost_str = ", ".join(f"{qty} {r}" for r, qty in WELL_BUILD_COST.items())
         return (
-            "  WELLS: there are no wells until an agent builds one. A well is built where "
-            "you stand, so to place one you move to the spot first, then use build with "
-            f"target 'well'; it costs {cost_str}. You cannot build on a resource node, so "
-            "stand clear of nodes first. Once built, a well yields water, fails less often "
-            "than a river, and anyone can harvest it."
+            "  WELLS: there are no wells until an agent builds one. A well is built at your "
+            f"current position and costs {cost_str}. Once built, a well yields water, fails "
+            "less often than a river, and anyone can harvest it."
         )
 
     def mechanics_section():
         return [
             "--- HOW THE WORLD WORKS ---",
             "  SPACE: the world is a 2D plane. Every resource node sits at a fixed "
-            "location and you occupy your own position. A node's action happens AT the "
-            "node: to harvest (or otherwise act on) a node you must be there, so you "
-            "MOVE to it first and then act (move -> harvest). Moving spends energy "
-            "proportional to the straight-line distance from where you are now; the "
-            "distance and move cost to each node are listed in RESOURCE NODES.",
+            "location and you occupy your own position. You must be physically present at a "
+            "node to act on it. Moving changes your position and spends energy proportional "
+            "to the straight-line distance travelled; the distance and move cost to each "
+            "node you are not already at are listed in RESOURCE NODES.",
             "  SHELTER: a shelter is built at your CURRENT position and claims that exact "
-            "point as yours. Moving changes your current position, so to place a shelter at "
-            "a particular spot (e.g. next to a river) you MOVE there first, then build "
-            "(move -> build) -- the same way you move to a node before harvesting. You "
-            "cannot build a shelter on a resource node, so pick a spot clear of nodes. The "
-            "rest bonus applies only while you are AT your own shelter point.",
+            "point as yours. The rest bonus applies only while you are AT your own shelter "
+            "point.",
             "  WATER: harvest a river node to collect water into your inventory, "
             "THEN drink it. Drinking with no water in inventory fails.",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "
@@ -540,8 +535,8 @@ def build_prompt(model_id):
             "--- FOOD MECHANICS ---",
             "  FOOD: apples can be eaten directly. Potatoes, grain, and meat are "
             "harvested RAW and must be cooked before eating (harvest -> cook -> eat).",
-            "  You must MOVE to a food node before you can harvest it "
-            "(its distance + move cost are shown in FOOD NODES).",
+            "  The distance and move cost to each food node you are not already at are "
+            "shown in FOOD NODES.",
             "  Eating requires naming the exact food item in your inventory "
             "(e.g. apple, potato_cooked).",
         ]
@@ -551,8 +546,8 @@ def build_prompt(model_id):
             "--- WATER MECHANICS ---",
             "  WATER: harvest a river node to collect water into your inventory, "
             "THEN drink it. Drinking with no water in inventory fails.",
-            "  You must MOVE to a water node before you can harvest water there "
-            "(its distance + move cost are shown in WATER NODES).",
+            "  The distance and move cost to each water node you are not already at are "
+            "shown in WATER NODES.",
             wells_note(),
         ]
 
@@ -565,9 +560,8 @@ def build_prompt(model_id):
             cost_str = ", ".join(f"{qty} {r}" for r, qty in costs.items())
             lines.append(f"  build {tier} shelter requires: {cost_str}")
         lines.append("  improved shelter requires an existing basic shelter first.")
-        lines.append("  A shelter is built at your CURRENT position -- move to the spot you "
-                     "want before building (move -> build); the rest bonus applies only "
-                     "while you are at your own shelter point.")
+        lines.append("  A shelter is built at your CURRENT position; the rest bonus applies "
+                     "only while you are at your own shelter point.")
         held = {r: inventory.get(r, 0)
                 for costs in SHELTER_BUILD_COSTS.values() for r in costs}
         lines.append("  You are holding: "

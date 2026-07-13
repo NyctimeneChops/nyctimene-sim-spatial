@@ -13,15 +13,16 @@ Verifies (design doc sections 1-2, pass 2 scope):
   * HOW THE WORLD WORKS states the travel-to-node requirement (factual).
   * the spatial block's compression treatment (position core; per-node distances ride
     the nodes section / food-water exit) + the token cost it adds.
-  * arrival-perception: a node UNDER the agent renders "you do not need to move or travel
-    to reach this node" (at_node predicate) in place of the distance/move-cost row, and it
-    rides the food/water exit (present in both arms exactly when the food/water node is at
-    the agent's feet).
-  * well-building is surfaced in the prompt (agent-placed model): the WELLS note states
-    there are no wells until built, how to build one (target 'well', built where you stand,
-    you cannot build on a resource node) and its cost, rendered from WELL_BUILD_COST, in
-    both the CALM rules and the thirst water-mechanics exit; the SHELTER line likewise
-    states no-build-on-node.
+  * arrival-perception (ARRIVAL FIX v2): a node UNDER the agent renders "you are physically
+    present at this node" (at_node predicate, lexical match with the SPACE rule) in place of
+    the distance/move-cost row, and it rides the food/water exit (present in both arms
+    exactly when the food/water node is at the agent's feet).
+  * well-building is surfaced in the prompt (agent-placed model): the WELLS note states, as
+    FACTS, that there are no wells until built, that a well is built at your current position,
+    its cost (rendered from WELL_BUILD_COST), and its yield/reliability, in both the CALM
+    rules and the thirst water-mechanics exit.
+  * ARRIVAL FIX v2: SPACE/SHELTER/WELLS carry NO move-first procedure and NO build-on-node
+    clause (the no-build-on-node denial now reaches the agent at runtime via spatial_note).
   * NO enforcement was built (harvest handler still position-agnostic).
 """
 import json
@@ -108,7 +109,7 @@ check("agent position shown in status", "Position:           (100.0, 200.0)" in 
 NODE_EXPECT = [("apple", "distance 500.0 / move cost 1500"),
                ("potato", "distance 5.0 / move cost 15"),
                ("river", "distance 500.0 / move cost 1500"),
-               ("rock", "you do not need to move or travel to reach this node")]
+               ("rock", "you are physically present at this node")]
 for nt, expect in NODE_EXPECT:
     row = line_with(p, f"] {nt:<10}")
     print(f"    {nt:<7}: {row.strip()}")
@@ -116,8 +117,13 @@ for nt, expect in NODE_EXPECT:
 check("'move' is in AVAILABLE ACTIONS with a position-dependent cost",
       "move" in line_with(p, "move     costs energy"),
       line_with(p, "move     costs energy").strip())
-check("HOW THE WORLD WORKS states the travel-to-node requirement",
-      "MOVE to it first" in p and "SPACE:" in p)
+# ARRIVAL FIX v2: SPACE states physical presence as a CONSTRAINT (a fact), NOT a move-first
+# procedure. The old "MOVE to it first" coaching is gone from the whole prompt.
+check("HOW THE WORLD WORKS states physical presence as a CONSTRAINT (SPACE), not a procedure",
+      "You must be physically present at a" in p and "SPACE:" in p)
+check("prompt carries NO move-first procedure",
+      "move to it first" not in p.lower() and "move there first" not in p.lower()
+      and "move -> build" not in p and "move -> harvest" not in p)
 
 # ---------------------------------------------------- [A2] arrival-perception
 # rock(100,200) sits under the agent(100,200): its line must state arrival (perception),
@@ -125,8 +131,8 @@ check("HOW THE WORLD WORKS states the travel-to-node requirement",
 print("\n[A2] arrival-perception: node under the agent shows the arrival note, not a distance")
 rock_row = line_with(p, "] rock")
 print(f"    at-node (rock): {rock_row.strip()}")
-check("at-node line shows the arrival note",
-      "you do not need to move or travel to reach this node" in rock_row, rock_row.strip())
+check("at-node line shows the physical-presence note (lexical match with the SPACE rule)",
+      "you are physically present at this node" in rock_row, rock_row.strip())
 check("at-node line does NOT contain 'distance' (suffix replaced, not appended)",
       "distance" not in rock_row)
 check("at-node line does NOT contain 'move cost' (suffix replaced, not appended)",
@@ -139,7 +145,7 @@ check("a non-at-node node still shows 'distance ... / move cost ...'",
 p2 = render("tunnel_C1", 400.0, 600.0, tension=0, sources="{}")   # moved to the apple
 print("\n[B] DYNAMIC: same agent moved to (400, 600), distances recomputed")
 # from (400,600): apple 0/0 ; river dx300 dy100 -> 316.2 cost 949 ; rock 500/1500 ; potato 495/1485
-DYN_EXPECT = [("apple", "you do not need to move or travel to reach this node"),
+DYN_EXPECT = [("apple", "you are physically present at this node"),
               ("river", "distance 316.2 / move cost 949"),
               ("rock", "distance 500.0 / move cost 1500"),
               ("potato", "distance 495.0 / move cost 1485")]
@@ -185,10 +191,10 @@ p_food_exit = render("tunnel_C1", 400.0, 600.0, tension=100, sources=sources_hun
 p_thirst    = render("tunnel_C1", 400.0, 600.0, tension=100, sources=sources_thirst)  # thirst -> food compressed
 apple_food = line_with(p_food_exit, "] apple")
 print(f"    hunger-dominant apple line: {apple_food.strip()}")
-check("hunger-dominant: apple (food EXIT) line shows the arrival note",
-      "you do not need to move or travel to reach this node" in apple_food, apple_food.strip())
-check("thirst-dominant: apple (food, NON-exit) compressed away -> arrival note NOT present",
-      "you do not need to move or travel to reach this node" not in p_thirst)
+check("hunger-dominant: apple (food EXIT) line shows the physical-presence note",
+      "you are physically present at this node" in apple_food, apple_food.strip())
+check("thirst-dominant: apple (food, NON-exit) compressed away -> presence note NOT present",
+      "you are physically present at this node" not in p_thirst)
 
 # ---------------------------------------------------- [W] well-building discoverable
 # Agent-placed model: the well note must state HOW to build a well (target 'well', built
@@ -201,24 +207,30 @@ well_cost_str = ", ".join(f"{qty} {r}" for r, qty in WELL_BUILD_COST.items())
 print(f"\n[W] well-building surfaced in the prompt (agent-placed; cost from WELL_BUILD_COST = '{well_cost_str}')")
 wells_line = line_with(p, "WELLS:")          # p = CALM render at (100,200)
 print(f"    CALM WELLS line: {wells_line.strip()}")
-check("CALM prompt surfaces build target 'well'", "target 'well'" in p, wells_line.strip())
-check("CALM well note states it is agent-placed / built where you stand",
-      "there are no wells until an agent builds one" in wells_line and "built where you stand" in wells_line)
-check("CALM well note states you CANNOT build on a resource node",
-      "cannot build on a resource node" in wells_line)
+check("CALM well note states wells are agent-placed, built at your current position (facts)",
+      "there are no wells until an agent builds one" in wells_line
+      and "built at your current position" in wells_line)
 check("CALM prompt renders the well cost from WELL_BUILD_COST (in sync, not hardcoded)",
       well_cost_str in wells_line, f"expected cost '{well_cost_str}'")
 check("CALM well note states reliability + anyone can harvest",
       "fails less often than a river" in wells_line and "anyone can harvest it" in wells_line)
+# ARRIVAL FIX v2: the WELLS note carries NO build-on-node clause (that denial now reaches the
+# agent at runtime via spatial_note, not as prompt coaching).
+check("CALM WELLS line carries NO build-on-node clause",
+      "resource node" not in wells_line, wells_line.strip())
 shelter_line = line_with(p, "SHELTER:")
 print(f"    CALM SHELTER line: {shelter_line.strip()}")
-check("CALM SHELTER line states no-build-on-node",
-      "cannot build a shelter on a resource node" in shelter_line, shelter_line.strip())
+check("CALM SHELTER line carries NO build-on-node clause",
+      "resource node" not in shelter_line, shelter_line.strip())
+check("CALM SHELTER line states shelter is built at CURRENT position (fact)",
+      "built at your CURRENT position" in shelter_line)
 wells_thirst = line_with(p_thirst, "WELLS:")   # thirst-dominant -> WATER MECHANICS exit
 print(f"    thirst-exit WELLS line: {wells_thirst.strip()}")
-check("thirst WATER-MECHANICS exit surfaces well-building (target, no-build-on-node, cost)",
-      "target 'well'" in wells_thirst and "cannot build on a resource node" in wells_thirst
+check("thirst WATER-MECHANICS exit surfaces well-building (agent-placed, cost from constant)",
+      "there are no wells until an agent builds one" in wells_thirst
       and well_cost_str in wells_thirst, wells_thirst.strip())
+check("thirst WATER-MECHANICS exit states the new water-node distance wording",
+      "each water node you are not already at" in p_thirst)
 
 # ---------------------------------------------------- [D] token cost of spatial
 print("\n[D] token cost the spatial block adds (chars = the project's prompt_length unit)")

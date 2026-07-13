@@ -337,6 +337,24 @@ class Agent:
             self._log(f"move: could not resolve target '{target}'")
             return
 
+        # ARRIVAL FIX v2 (replay-validated): a move whose RESOLVED TARGET is within
+        # AT_NODE_EPSILON of the agent's CURRENT position is a no-op. It must FAIL, not
+        # silently succeed with distance 0 / cost 0. The SUCCEEDED -> FAILED reversal in the
+        # agent's own replayed history is the corrective the replay showed to be load-bearing:
+        # position UNCHANGED, no skill XP, and the failure raises the `failures` tension source
+        # exactly like any other failed action (via _record_action -> _apply_action_tension).
+        if movement.at_node(cur_x, cur_y, tx, ty):
+            if is_node:
+                reason = (f"FAILED - you were already physically present at the {target} node, "
+                          f"so no movement occurred.")
+            else:
+                reason = ("FAILED - you were already physically present at that point, so no "
+                          "movement occurred.")
+            self._set_position(cur_x, cur_y, reason)   # position UNCHANGED; note carries the reason
+            self._record_action("move", False, decision_tokens, 1, 1)
+            self._log(f"move DENIED -> {label}: already at target (no-op)")
+            return
+
         # GRACEFUL DISPLACEMENT (cleanup): resolve the target to an actual landing point.
         # Obstacles = other agents + other-owned shelter points (same group). Node targets
         # land exactly (co-harvest stacking). An occupied non-node target lands at the
@@ -878,6 +896,11 @@ class Agent:
             node_points = [(float(n.get("pos_x", 0.0) or 0.0), float(n.get("pos_y", 0.0) or 0.0))
                            for n in nodes]
             if movement.on_any_node(cx, cy, node_points):
+                # ARRIVAL FIX v2: surface the denial reason to the AGENT via spatial_note (the
+                # prose that used to explain this constraint is deleted from the prompt -- the
+                # world teaches it now). Deny only; position UNCHANGED (never relocate).
+                self._set_position(cx, cy, "FAILED - you cannot build on a resource node. "
+                                           "Move off the node first.")
                 self._record_action("build", False, total_tokens, skill_before, skill_before)
                 self._log("build DENIED: cannot build on a resource node; move off it first")
                 return
