@@ -442,7 +442,7 @@ def build_prompt(model_id):
             "  TENSION: unresolved problems accumulate tension. Failed actions, hunger,",
             "  thirst, lacking shelter, and ignoring messages all raise it. High tension",
             "  narrows what you can perceive of the world and increases the token cost of",
-            "  everything you do. Each source of tension is removed only by its own remedy:",
+            "  everything you do. Each source of tension is removed by its own remedy:",
             "  hunger by eating, thirst by drinking, failure by succeeding, lack of shelter",
             "  by building one. Resting slightly lowers tension from every source.",
         ]

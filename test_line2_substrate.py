@@ -155,8 +155,8 @@ check("CALM prompt mentions no 'sleep' anywhere", "sleep" not in calm.lower(),
       "AVAILABLE ACTIONS + directive + status all sleep-free")
 check("TENSION block dropped 'Sleep always reduces tension'",
       "sleep always reduces tension" not in calm.lower())
-check("TENSION block states the one rule (removed only by its own remedy)",
-      "removed only by its own remedy" in calm)
+check("TENSION block states the remedy rule (removed by its own remedy, no false 'only')",
+      "removed by its own remedy" in calm and "removed only by its own remedy" not in calm)
 check("TENSION block states rest lowers tension from every source",
       "Resting slightly lowers tension from every source" in calm)
 # high tension -> TUNNEL band still carries no 'Sleep is always available' line
