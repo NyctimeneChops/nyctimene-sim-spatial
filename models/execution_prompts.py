@@ -5,7 +5,7 @@ After the decision inference parses to one of the complex actions —
 hunt-harvests (target hunting), craft, build, or a trade proposal — the agent
 runs a SECOND inference with one of these action-specific prompts and executes
 based on its output. Simple actions (gather-harvests, eat, drink, cook, rest,
-sleep, simple message) execute directly from the decision with one inference.
+simple message) execute directly from the decision with one inference.
 
 Both inferences' tokens_used are charged: session budget normally, social
 budget for the trade-proposal execution call.

@@ -9,7 +9,7 @@ from constants import (
     ACTION_INTERVAL_SECONDS, BASAL_INCOME, BREAD_CRAFT_RECIPE, BUILDABLE_NODE_TYPES,
     COOK_MAP, HARVEST_RESOURCE_MAP, HARVEST_SOLO_UNITS, INACTIVITY_THRESHOLD_TICKS,
     INFERENCE_MODEL_NAME, policy_source_for_group,
-    NODE_BASE_FAILURE_RATES, NODE_MAX_YIELDS, SHELTER_BUILD_COSTS, SLEEP_DURATION_SECONDS,
+    NODE_BASE_FAILURE_RATES, NODE_MAX_YIELDS, SHELTER_BUILD_COSTS,
     TOOL_CRAFT_RECIPES, TOOL_NAMES, WELL_BUILD_COST,
 )
 from mechanics import energy as energy_mod
@@ -143,7 +143,7 @@ class Agent:
         the decision prompt + raw response, plus the second-stage execution
         prompt/response for two-stage actions, and the rendered prompt lengths
         (the tunneling-ablation efficiency metric). Skipped when no inference
-        ran this cycle (e.g. forced sleep on a depleted budget).
+        ran this cycle.
         """
         prompt_text = getattr(self, "_decision_prompt", None)
         if not prompt_text:
@@ -391,7 +391,7 @@ class Agent:
         capped at MAX_ENERGY server-side. Rest uses the shelter variant when the
         agent is sheltered."""
         sheltered = False
-        if action_type in ("rest", "sleep"):
+        if action_type == "rest":
             try:
                 # SPATIAL CLEANUP: the shelter rest bonus is POSITIONAL -- it applies ONLY
                 # when the owner is AT its own shelter point (exact presence). No shelter, or
@@ -422,18 +422,18 @@ class Agent:
             if action_type in ("message", "trade"):
                 self._pending_msgs_before = \
                     tension.get_pending_message_count(self.model_id)
-            tension.accrue_action_tick(self.model_id, action_type,
-                                       is_sleeping=(action_type == "sleep"))
+            tension.accrue_action_tick(self.model_id, action_type)
         except Exception as exc:
             self._log(f"tension tick error: {exc}")
 
     def _apply_action_tension(self, action_type, succeeded):
         """
-        Resolution/decay hooks per spec section 3: failures accrue +4;
-        successes resolve their source bucket (eat -> hunger, drink ->
-        thirst, sleep -> psychological relief, shelter build -> shelter,
-        message/trade response -> messages) and earn the passive -2
-        psychological decay. Returns the post-update total for
+        Resolution/decay hooks per spec section 3, under the one rule (each
+        source removed only by its own remedy): failures accrue +4; a success
+        resolves its own source bucket (eat -> hunger, drink -> thirst, shelter
+        build -> shelter, message/trade response -> messages) and, because
+        succeeding IS the remedy for failure, drains the failures bucket by the
+        passive -2 success decay. Returns the post-update total for
         tension_at_action.
         """
         try:
@@ -444,8 +444,6 @@ class Agent:
                     tension.resolve(self.model_id, "hunger")
                 elif action_type == "drink":
                     tension.resolve(self.model_id, "thirst")
-                elif action_type == "sleep":
-                    tension.apply_sleep_relief(self.model_id)
                 elif action_type == "build":
                     if self._get_model().get("shelter_status", "none") != "none":
                         tension.resolve(self.model_id, "shelter")
@@ -582,7 +580,6 @@ class Agent:
             "eat":     self._handle_eat,
             "drink":   self._handle_drink,
             "rest":    self._handle_rest,
-            "sleep":   self._handle_sleep,
             "craft":   self._handle_craft,
             "build":   self._handle_build,
             "trade":   self._handle_trade,
@@ -772,40 +769,16 @@ class Agent:
         # FREE recovery yield: rest credits YIELD_REST (or the shelter variant),
         # capped. This is the self-rescue floor - always affordable.
         self._credit_consumption("rest")
+        # Rest also lowers tension from every source slowly and proportionally
+        # (below the hunger/thirst accrual rates, so it never outpaces a need).
+        try:
+            tension.apply_rest_relief(self.model_id)
+        except Exception as exc:
+            self._log(f"rest tension relief error: {exc}")
         skill_before = get_skill_level(self.model_id, "rest")
         skill_after  = self._increment_skill("rest", skill_before)
         self._record_action("rest", True, decision_tokens, skill_before, skill_after)
         self._log("rest: recovered energy (self-rescue floor)")
-
-    # ------------------------------------------------------------------ sleep
-
-    def _handle_sleep(self, action, decision_tokens):
-        self._charge(decision_tokens)
-
-        start_resp = requests.post(f"{BASE_URL}/sleep/start", json={
-            "model_id":   self.model_id,
-            "day_number": self._day(),
-        }, timeout=10)
-        if start_resp.status_code == 400:
-            self._log(f"sleep/start rejected: {start_resp.json().get('error')}")
-            return
-        start_resp.raise_for_status()
-
-        self._log(f"sleeping for {SLEEP_DURATION_SECONDS}s")
-        self._stop_event.wait(SLEEP_DURATION_SECONDS)
-
-        end_resp = requests.post(f"{BASE_URL}/sleep/end",
-                                 json={"model_id": self.model_id}, timeout=10)
-        end_resp.raise_for_status()
-
-        # FREE recovery yield: sleep credits the rest yield (shelter variant when
-        # sheltered), capped. Pass 1 folds sleep into the rest yield.
-        self._credit_consumption("sleep")
-
-        skill_before = get_skill_level(self.model_id, "sleep")
-        skill_after  = self._increment_skill("sleep", skill_before)
-        self._record_action("sleep", True, decision_tokens, skill_before, skill_after)
-        self._log("sleep ended: recovered rest energy")
 
     # ------------------------------------------------------------------ craft
 

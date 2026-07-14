@@ -80,7 +80,7 @@ def directive_lines():
         "Return your chosen action as a JSON object:",
         '{"action_type": "...", "target": "...", "reasoning": "..."}',
         "",
-        "action_type must be one of: harvest, cook, eat, drink, sleep, build, "
+        "action_type must be one of: harvest, cook, eat, drink, build, "
         "craft, trade, message, rest, move",
         "target: the node type name only (e.g. potato, river - never include "
         "bracketed IDs), resource, or model_id. For move, the target is the node "
@@ -103,8 +103,7 @@ REASONING_MEMORY_MAX_CHARS = 240
 # THE EXIT RULE (load-bearing, non-negotiable): tunneling restricts the
 # IRRELEVANT, never the exit. This map is the audit surface — for each
 # dominant source, the exit sections listed here are rendered in FULL detail
-# at every band, so the resolution path is always visible. Sleep is also
-# always listed as available in every band.
+# at every band, so the resolution path is always visible.
 TENSION_RELEVANCE_MAP = {
     # gen10: recent-action history (last_actions) added to the hunger/thirst
     # exits. It is factual STATE (what you did + whether it failed), not a
@@ -131,7 +130,6 @@ STRESSED_BANNER = ("You feel tense. Your attention is narrowing toward: "
                    "{dominant}.")
 TUNNEL_BANNER = ("Your tension is severe. You can barely think about "
                  "anything except: {dominant}")
-SLEEP_ALWAYS_LINE = "Sleep is always available."
 
 
 def _get(path, params=None):
@@ -253,7 +251,6 @@ def build_prompt(model_id):
         lines.extend([
             f"  Shelter:            {model['shelter_status']}",
             f"  Attention:          {model['attention_state']}",
-            f"  Sleeping:           {'yes' if model['is_sleeping'] else 'no'}",
             f"  Tension: {tension_total} / 100 ({tension_band}) - "
             f"yesterday: {tension_y1}, day before: {tension_y2}",
             f"    Sources: hunger {tension_sources['hunger']:.0f}, "
@@ -444,10 +441,10 @@ def build_prompt(model_id):
             "afford them.",
             "  TENSION: unresolved problems accumulate tension. Failed actions, hunger,",
             "  thirst, lacking shelter, and ignoring messages all raise it. High tension",
-            "  narrows what you can perceive of the world and increases the token cost",
-            "  of everything you do. Resolving the underlying problem removes its",
-            "  tension. Sleep always reduces tension. Keep your tension low to stay",
-            "  clear-headed and efficient.",
+            "  narrows what you can perceive of the world and increases the token cost of",
+            "  everything you do. Each source of tension is removed only by its own remedy:",
+            "  hunger by eating, thirst by drinking, failure by succeeding, lack of shelter",
+            "  by building one. Resting slightly lowers tension from every source.",
         ]
 
     def broadcasts_section():
@@ -612,7 +609,7 @@ def build_prompt(model_id):
         "inventory":    f"--- INVENTORY --- ({len(inventory)} item types held)",
         "skills":       f"--- SKILLS --- ({len(skills)} skills recorded)",
         "actions":      "--- AVAILABLE ACTIONS --- (harvest, cook, eat, drink, "
-                        "sleep, build, craft, trade, message, rest)",
+                        "build, craft, trade, message, rest)",
         "nodes":        f"--- RESOURCE NODES --- ({len(nodes)} nodes exist)",
         "experience":   f"--- YOUR EXPERIENCE SO FAR --- ({len(lifetime_totals)} action types attempted)",
         "last_actions": f"--- YOUR LAST 8 ACTIONS --- ({len(last_actions)} recent, {failed_recent} failed)",
@@ -664,7 +661,6 @@ def build_prompt(model_id):
         parts.extend(recent_decisions_section())
         parts.append("")
         parts.append(STRESSED_BANNER.format(dominant=tension_dominant))
-        parts.append(SLEEP_ALWAYS_LINE)
         # The dominant source's sections, full detail, directly under status.
         parts.extend(exit_block())
         # Everything else compresses to one-line summaries; broadcasts
@@ -691,7 +687,6 @@ def build_prompt(model_id):
         parts.extend(recent_decisions_section())
         parts.append("")
         parts.append(TUNNEL_BANNER.format(dominant=tension_dominant))
-        parts.append(SLEEP_ALWAYS_LINE)
         # ONLY the sections relevant to resolving the dominant source.
         parts.extend(exit_block())
         parts.append("")

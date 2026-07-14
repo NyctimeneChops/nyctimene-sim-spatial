@@ -27,7 +27,7 @@ from constants import (
 
 # --- Action taxonomy (spec section 3) --------------------------------------
 # FREE: never denied for lack of energy (still costs inference tokens).
-FREE_ACTIONS = frozenset({"eat", "drink", "rest", "sleep", "message", "trade"})
+FREE_ACTIONS = frozenset({"eat", "drink", "rest", "message", "trade"})
 # COSTED: require energy >= the fixed cost, else denied. (Cooperative harvest is
 # NOT in Pass 1 - solo harvest only.)
 COSTED_ACTION_COSTS = {
@@ -72,13 +72,13 @@ def is_soft_locked(energy):
 # --- yields -----------------------------------------------------------------
 
 def consumption_yield(action_type, target=None, sheltered=False):
-    """Energy a FREE action credits. eat depends on raw/cooked; rest/sleep on
+    """Energy a FREE action credits. eat depends on raw/cooked; rest on
     shelter; social/trade yield nothing in Pass 1."""
     if action_type == "eat":
         return YIELD_EAT_COOKED if target in COOKED_FOODS else YIELD_EAT_RAW
     if action_type == "drink":
         return YIELD_DRINK
-    if action_type in ("rest", "sleep"):
+    if action_type == "rest":
         return YIELD_REST_SHELTER if sheltered else YIELD_REST
     return 0
 

@@ -10,7 +10,7 @@ VALID_RESOURCE_TYPES = {
 VALID_EXPERIMENT_GROUPS = ("tunnel_C1", "tunnel_C2", "flat_C1", "flat_C2")
 
 VALID_ACTION_TYPES = {
-    "harvest", "cook", "eat", "drink", "sleep",
+    "harvest", "cook", "eat", "drink",
     "build", "craft", "trade", "message", "rest",
     "move",   # space milestone pass 1: teleport-per-tick move (Euclidean energy cost)
 }
@@ -134,9 +134,6 @@ WELL_BUILD_COST = {"stone": 3, "wood": 2}
 # grain_cooked required to craft one bread.
 BREAD_CRAFT_RECIPE = {"grain_cooked": 2}
 
-# Real-time seconds an agent sleeps per sleep action.
-SLEEP_DURATION_SECONDS = 60
-
 # Minimum wall-clock seconds between an agent's consecutive actions (per-agent
 # cooldown, not global). Action tempo is coupled to population size through
 # GPU throughput: Run 2's 24 agents ran ~15-16 actions/day vs Run 1's 8-12,
@@ -198,7 +195,6 @@ ACTION_BASE_STAMINA_COSTS = {
     "cook":      5,
     "eat":       1,
     "drink":     1,
-    "sleep":     0,
     "build":    20,
     "craft":    15,
     "trade":     3,
@@ -213,14 +209,11 @@ ACTION_BASE_STAMINA_COSTS = {
 TENSION_MAX = 100
 
 # Per-action accrual rates (spec section 2). Escalated rates apply once the
-# matching days_without_* counter on the models row reaches 1. Hunger and
-# thirst accrue at half rate during sleep (metabolically quiet, never zero);
-# shelter and messages do not accrue during sleep.
+# matching days_without_* counter on the models row reaches 1.
 TENSION_HUNGER_PER_ACTION              = 1.5
 TENSION_HUNGER_PER_ACTION_ESCALATED    = 2.5
 TENSION_THIRST_PER_ACTION              = 2.0
 TENSION_THIRST_PER_ACTION_ESCALATED    = 3.5
-TENSION_SLEEP_RATE_MULTIPLIER          = 0.5
 TENSION_SHELTER_PER_ACTION             = 0.3
 TENSION_SHELTER_CAP                    = 15
 TENSION_MESSAGE_PER_ACTION_PER_PENDING = 0.5
@@ -232,12 +225,27 @@ TENSION_MESSAGES_CAP                   = 15
 TENSION_FAILED_ACTION   = 4
 TENSION_DEATH_WITNESSED = 15
 
-# Resolution and decay (spec section 3) — these touch PSYCHOLOGICAL buckets
-# only. Physiological tension resolves exclusively through its real remedy
-# (eat zeroes hunger, drink zeroes thirst): you cannot sleep away hunger.
-TENSION_SLEEP_RELIEF           = 25
+# Resolution and decay (spec section 3). THE ONE RULE: every tension source is
+# removed only by its own remedy (hunger by eating, thirst by drinking, failure
+# by succeeding, shelter by building, messages by reading). No categories, no
+# cross-soothing. TENSION_SUCCESS_DECAY is the remedy for the failures bucket
+# ONLY (succeeding is how you answer failure); it no longer touches shelter or
+# messages.
 TENSION_SUCCESS_DECAY          = 2
 TENSION_OVERNIGHT_FAILURE_FADE = 0.5
+
+# Rest is the only thing that lowers tension from EVERY source at once, and it
+# does so slowly, distributed proportionally across the buckets (so the dominant
+# source, and thus the tunneling exit, is preserved). ENFORCED INVARIANT: rest
+# must drain tension SLOWER than an unmet need fills it, so an unmet need always
+# outruns any attempt to rest it away. A hungry agent that rests still gets more
+# tense, just more slowly. "You cannot soothe the alarm, you can only answer it"
+# is enforced here by ARITHMETIC, not by a category gate. If REST_TENSION_RELIEF
+# is ever raised above the hunger/thirst accrual rates, agents will rest away
+# their hunger and die with full pantries; the assert below is the guard.
+REST_TENSION_RELIEF = 1.0
+assert REST_TENSION_RELIEF < min(TENSION_HUNGER_PER_ACTION, TENSION_THIRST_PER_ACTION), \
+    "rest must drain tension SLOWER than an unmet need fills it, or agents can rest away hunger"
 
 # Band thresholds: CALM < 30 <= STRESSED < 60 <= TUNNEL.
 TENSION_BAND_STRESSED = 30
@@ -322,8 +330,8 @@ YIELD_DRINK       = 9000
 # Rest must beat idling (a stuck agent can crawl back) but lose badly to eating
 # (rest is a survival floor, never a winning strategy): a rest tick nets ~+1000
 # after the ~1500 thought, far below eating's +12000. Shelter doubles it.
-YIELD_REST        = 2000    # rest / sleep with no shelter
-YIELD_REST_SHELTER = 4000   # rest / sleep in shelter (shelter doubles rest)
+YIELD_REST        = 2000    # rest with no shelter
+YIELD_REST_SHELTER = 4000   # rest in shelter (shelter doubles rest)
 
 # Physical units a solo harvest adds to inventory on success.
 HARVEST_SOLO_UNITS = 2

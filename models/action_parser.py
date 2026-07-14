@@ -100,7 +100,7 @@ def _validate_target(action_type, target):
         else:
             target = None
 
-    if action_type in {"rest", "sleep"}:
+    if action_type == "rest":
         return True, None
 
     if action_type == "drink":
