@@ -129,6 +129,13 @@ investment — that experiment has still never run.**
 - **F4 (new).** **Prompt bloat causes cognitive misallocation.** Both arms gather the same
   resources; only the compressed arm consumes them. The full prompt buries the signal that the
   need is already satisfiable from inventory.
+  > **[SUPERSEDED by LN-005, 2026-07-13].** This finding is WRONG on mechanism. The flat arm
+  > does not "gather the same resources and fail to consume them." It gathers the WRONG MIX:
+  > 75% water / 22% food vs tunnel's 52%/46%, and ate 3 times vs 110 in line2_gen1. The
+  > failure is ACQUISITION (attention allocation across competing needs), not consumption.
+  > The claim that "eat what you're holding" is the missing signal is void: the flat arm was
+  > not holding food. See LN-005 F15 for the corrected mechanism. Original text kept per the
+  > append-only convention.
 - **F8 (new, structural).** **The tension architecture cannot generate instrumental goals.** No
   tension source points at materials, so materials are never gathered, so nothing is ever built.
 
